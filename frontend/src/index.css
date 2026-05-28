@@ -1,0 +1,322 @@
+/* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css');
+
+/* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+/* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f2f4f8;
+  --bg-tertiary: #f9fafb;
+  --text-primary: #1a1a2e;
+  --text-secondary: #888780;
+  --border-color: rgba(0, 0, 0, 0.1);
+  --sidebar-bg: #1a3a6b;
+  --brand-navy: #1a3a6b;
+  --brand-blue: #2e6db4;
+  --brand-gold: #c8960c;
+  --semantic-green: #1d9e75;
+  --semantic-red: #e24b4a;
+  --semantic-amber: #ef9f27;
+  --semantic-purple: #7f77dd;
+  --semantic-gray: #888780;
+}
+
+:root[data-theme='dark'] {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-tertiary: #22263a;
+  --text-primary: #e8eaf0;
+  --text-secondary: #9499aa;
+  --border-color: rgba(255, 255, 255, 0.08);
+  --sidebar-bg: #111827;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    to right,
+    var(--bg-secondary) 8%,
+    var(--bg-tertiary) 18%,
+    var(--bg-secondary) 33%
+  );
+  background-size: 1000px 100%;
+}
+
+/* Login page animations */
+.login-page-bg {
+  background: linear-gradient(
+    135deg,
+    var(--bg-primary) 0%,
+    var(--bg-tertiary) 35%,
+    #e8eef8 70%,
+    var(--bg-secondary) 100%
+  );
+  background-size: 200% 200%;
+  animation: login-bg-shift 18s ease-in-out infinite alternate;
+}
+
+:root[data-theme='dark'] .login-page-bg {
+  background: linear-gradient(
+    135deg,
+    #0a0c12 0%,
+    #111827 35%,
+    #1a2540 70%,
+    #0f1117 100%
+  );
+  background-size: 200% 200%;
+}
+
+.login-orb {
+  animation: login-orb-drift 12s ease-in-out infinite;
+}
+
+.login-orb-2 {
+  animation-delay: -4s;
+}
+
+.login-orb-3 {
+  animation-delay: -8s;
+}
+
+.login-fade-up {
+  opacity: 0;
+  animation: login-fade-up 0.7s ease forwards;
+}
+
+.login-delay-1 {
+  animation-delay: 0.12s;
+}
+
+.login-delay-2 {
+  animation-delay: 0.24s;
+}
+
+.login-delay-3 {
+  animation-delay: 0.36s;
+}
+
+.login-delay-4 {
+  animation-delay: 0.48s;
+}
+
+.login-delay-5 {
+  animation-delay: 0.6s;
+}
+
+.login-float {
+  animation: login-float 6s ease-in-out infinite;
+}
+
+.login-card-pop {
+  opacity: 0;
+  transform: translateY(12px) scale(0.96);
+  animation: login-card-pop 0.6s ease forwards;
+}
+
+.login-bar-grow {
+  transform-origin: bottom;
+  transform: scaleY(0);
+  animation: login-bar-grow 0.8s ease forwards;
+}
+
+.login-line-draw {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 400;
+  animation: login-line-draw 2s ease forwards 0.8s;
+}
+
+.login-pulse-dot {
+  animation: login-pulse-glow 2s ease-in-out infinite;
+}
+
+.login-orbit-dot {
+  animation: login-orbit-pulse 3s ease-in-out infinite;
+}
+
+.login-form-panel {
+  opacity: 0;
+  transform: translateX(24px);
+  animation: login-slide-in 0.8s ease forwards 0.2s;
+}
+
+.login-input:focus {
+  box-shadow: 0 0 0 3px rgba(46, 109, 180, 0.15);
+}
+
+.login-submit {
+  position: relative;
+  overflow: hidden;
+}
+
+.login-submit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.15),
+    transparent
+  );
+  transform: translateX(-100%);
+  transition: transform 0.5s ease;
+}
+
+.login-submit:hover:not(:disabled)::after {
+  transform: translateX(100%);
+}
+
+@keyframes login-bg-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes login-orb-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(20px, -15px) scale(1.05);
+  }
+  66% {
+    transform: translate(-10px, 10px) scale(0.95);
+  }
+}
+
+@keyframes login-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes login-card-pop {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes login-bar-grow {
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes login-line-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes login-pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 4px #1d9e75);
+  }
+  50% {
+    opacity: 0.6;
+    filter: drop-shadow(0 0 8px #1d9e75);
+  }
+}
+
+@keyframes login-orbit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    r: 5;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes login-slide-in {
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-page-bg,
+  .login-orb,
+  .login-fade-up,
+  .login-float,
+  .login-card-pop,
+  .login-bar-grow,
+  .login-line-draw,
+  .login-pulse-dot,
+  .login-orbit-dot,
+  .login-form-panel {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+}

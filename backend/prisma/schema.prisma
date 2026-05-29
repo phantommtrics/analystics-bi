@@ -22,6 +22,15 @@ enum TokenStatus {
   REVOKED
 }
 
+enum DataSourceType {
+  POSTGRES
+}
+
+enum SslMode {
+  DISABLE
+  REQUIRE
+}
+
 model User {
   id                 String            @id @default(cuid())
   username           String            @unique
@@ -35,6 +44,7 @@ model User {
   roles              UserRole[]
   groups             UserGroupMember[]
   refreshTokens      RefreshToken[]
+  dataSources        DataSource[]
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 }
@@ -114,4 +124,21 @@ model RefreshToken {
   user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
+}
+
+model DataSource {
+  id                String         @id @default(cuid())
+  name              String         @unique
+  type              DataSourceType @default(POSTGRES)
+  host              String
+  port              Int            @default(5432)
+  database          String
+  username          String
+  passwordEncrypted String
+  sslMode           SslMode        @default(REQUIRE)
+  isActive          Boolean        @default(true)
+  createdById       String?
+  createdBy         User?          @relation(fields: [createdById], references: [id])
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 }

@@ -16,6 +16,7 @@ export const MODULES = [
   'system-config-roles',
   'system-config-groups',
   'system-config-operators',
+  'system-config-datasources',
   'audit',
 ] as const
 
@@ -23,6 +24,7 @@ export const SYSTEM_CONFIG_MODULES = [
   'system-config-roles',
   'system-config-groups',
   'system-config-operators',
+  'system-config-datasources',
 ] as const
 
 export const ACTIONS = [
@@ -44,6 +46,7 @@ const MODULE_ACTION_OVERRIDES: Partial<Record<ModuleKey, readonly ActionKey[]>> 
   'system-config-roles': SYSTEM_CONFIG_ACTIONS,
   'system-config-groups': SYSTEM_CONFIG_ACTIONS,
   'system-config-operators': SYSTEM_CONFIG_ACTIONS,
+  'system-config-datasources': SYSTEM_CONFIG_ACTIONS,
 }
 
 export function actionsForModule(moduleKey: string): readonly ActionKey[] {

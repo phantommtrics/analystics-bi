@@ -18,6 +18,8 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v === 'true' || v === '1'),
+  /** 32-byte key (base64) for encrypting external database credentials */
+  DATASOURCE_ENCRYPTION_KEY: z.string().min(1),
 })
 
 export const env = envSchema.parse(process.env)

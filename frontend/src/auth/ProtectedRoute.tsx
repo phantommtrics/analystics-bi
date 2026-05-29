@@ -17,5 +17,14 @@ export function ProtectedRoute() {
     return <Navigate to="/login" replace state={{ from: location }} />
   }
 
+  const onChangePassword = location.pathname === '/change-password'
+  if (user.mustChangePassword && !onChangePassword) {
+    return <Navigate to="/change-password" replace />
+  }
+
+  if (!user.mustChangePassword && onChangePassword) {
+    return <Navigate to="/" replace />
+  }
+
   return <Outlet />
 }

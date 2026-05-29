@@ -23,16 +23,20 @@ enum TokenStatus {
 }
 
 model User {
-  id           String         @id @default(cuid())
-  username     String         @unique
-  email        String         @unique
-  passwordHash String
-  userType     UserType
-  status       UserStatus     @default(ACTIVE)
-  roles        UserRole[]
-  refreshTokens RefreshToken[]
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  id                 String            @id @default(cuid())
+  username           String            @unique
+  email              String            @unique
+  displayName        String?
+  passwordHash       String
+  userType           UserType
+  status             UserStatus        @default(ACTIVE)
+  mustChangePassword Boolean           @default(false)
+  lastLoginAt        DateTime?
+  roles              UserRole[]
+  groups             UserGroupMember[]
+  refreshTokens      RefreshToken[]
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 }
 
 model Role {
@@ -40,6 +44,7 @@ model Role {
   name        String           @unique
   description String?
   users       UserRole[]
+  groups      UserGroup[]
   permissions RolePermission[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
@@ -59,10 +64,10 @@ model Permission {
 }
 
 model UserRole {
-  userId    String
-  roleId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  userId     String
+  roleId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
   assignedAt DateTime @default(now())
 
   @@id([userId, roleId])
@@ -76,6 +81,27 @@ model RolePermission {
   assignedAt   DateTime   @default(now())
 
   @@id([roleId, permissionId])
+}
+
+model UserGroup {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  description String?
+  roleId      String
+  role        Role              @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  members     UserGroupMember[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model UserGroupMember {
+  userId     String
+  groupId    String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group      UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  assignedAt DateTime  @default(now())
+
+  @@id([userId, groupId])
 }
 
 model RefreshToken {

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import jwt from 'jsonwebtoken'
+import jwt, { type SignOptions } from 'jsonwebtoken'
 import { env } from '../env.js'
 
 export interface AccessClaims {
@@ -12,12 +12,15 @@ export interface RefreshClaims {
   tokenId: string
 }
 
+const accessSignOptions: SignOptions = { expiresIn: env.JWT_ACCESS_EXPIRES_IN as SignOptions['expiresIn'] }
+const refreshSignOptions: SignOptions = { expiresIn: env.JWT_REFRESH_EXPIRES_IN as SignOptions['expiresIn'] }
+
 export function signAccessToken(claims: AccessClaims) {
-  return jwt.sign(claims, env.JWT_ACCESS_SECRET, { expiresIn: env.JWT_ACCESS_EXPIRES_IN })
+  return jwt.sign(claims, env.JWT_ACCESS_SECRET, accessSignOptions)
 }
 
 export function signRefreshToken(claims: RefreshClaims) {
-  return jwt.sign(claims, env.JWT_REFRESH_SECRET, { expiresIn: env.JWT_REFRESH_EXPIRES_IN })
+  return jwt.sign(claims, env.JWT_REFRESH_SECRET, refreshSignOptions)
 }
 
 export function verifyAccessToken(token: string) {

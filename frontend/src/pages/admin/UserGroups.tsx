@@ -1,0 +1,359 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { TopBar } from '../../components/layout/TopBar'
+import { Card, CardHeader, CardTitle } from '../../components/ui/Card'
+import { ConfirmModal } from '../../components/ui/ConfirmModal'
+import { DataTable } from '../../components/ui/DataTable'
+import { ExpandableCard } from '../../components/ui/ExpandableCard'
+import { LoadingButton } from '../../components/ui/LoadingButton'
+import { SearchableSelect } from '../../components/ui/SearchableSelect'
+import { adminApi, type GroupSummary, type RoleSummary } from '../../api/admin'
+import { useAuth } from '../../auth/AuthContext'
+
+type PendingAction =
+  | { type: 'create' }
+  | { type: 'saveRole' }
+  | { type: 'delete'; groupId: string; groupName: string }
+  | null
+
+export function UserGroups() {
+  const { accessToken, refreshUser } = useAuth()
+  const [groups, setGroups] = useState<GroupSummary[]>([])
+  const [roles, setRoles] = useState<RoleSummary[]>([])
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
+  const [savedRoleId, setSavedRoleId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [showForm, setShowForm] = useState(false)
+  const [pending, setPending] = useState<PendingAction>(null)
+  const [formName, setFormName] = useState('')
+  const [formDescription, setFormDescription] = useState('')
+  const [formRoleId, setFormRoleId] = useState<string | null>(null)
+
+  const roleDirty =
+    selectedGroupId !== null &&
+    selectedRoleId !== null &&
+    selectedRoleId !== savedRoleId
+
+  const roleOptions = useMemo(
+    () =>
+      roles.map((r) => ({
+        id: r.id,
+        label: r.name,
+        description: r.description ?? undefined,
+      })),
+    [roles],
+  )
+
+  const loadData = useCallback(async () => {
+    if (!accessToken) return
+    const [groupList, roleList] = await Promise.all([
+      adminApi.listGroups(accessToken),
+      adminApi.listRoles(accessToken),
+    ])
+    setGroups(groupList)
+    setRoles(roleList)
+  }, [accessToken])
+
+  useEffect(() => {
+    if (!accessToken) return
+    setLoading(true)
+    loadData()
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load'))
+      .finally(() => setLoading(false))
+  }, [accessToken, loadData])
+
+  useEffect(() => {
+    if (!accessToken || !selectedGroupId) {
+      setSelectedRoleId(null)
+      setSavedRoleId(null)
+      return
+    }
+    adminApi
+      .getGroup(accessToken, selectedGroupId)
+      .then((g) => {
+        setSelectedRoleId(g.roleId)
+        setSavedRoleId(g.roleId)
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load group'))
+  }, [accessToken, selectedGroupId])
+
+  async function executeCreate() {
+    if (!accessToken || !formName.trim() || !formRoleId) return
+    setActionLoading(true)
+    setError('')
+    try {
+      const created = await adminApi.createGroup(accessToken, {
+        name: formName.trim(),
+        description: formDescription.trim() || undefined,
+        roleId: formRoleId,
+      })
+      setSuccess(`Group "${created.name}" created`)
+      await loadData()
+      setShowForm(false)
+      setFormName('')
+      setFormDescription('')
+      setFormRoleId(null)
+      setSelectedGroupId(created.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create group')
+    } finally {
+      setActionLoading(false)
+      setPending(null)
+    }
+  }
+
+  async function executeSaveRole() {
+    if (!accessToken || !selectedGroupId || !selectedRoleId || !roleDirty) return
+    setActionLoading(true)
+    setSuccess('')
+    try {
+      await adminApi.updateGroup(accessToken, selectedGroupId, { roleId: selectedRoleId })
+      setSavedRoleId(selectedRoleId)
+      await loadData()
+      await refreshUser()
+      setSuccess('Group role saved. Member permissions update on next login.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save role')
+    } finally {
+      setActionLoading(false)
+      setPending(null)
+    }
+  }
+
+  async function executeDelete(groupId: string) {
+    if (!accessToken) return
+    setActionLoading(true)
+    try {
+      await adminApi.deleteGroup(accessToken, groupId)
+      setSuccess('Group deleted')
+      if (selectedGroupId === groupId) setSelectedGroupId(null)
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete group')
+    } finally {
+      setActionLoading(false)
+      setPending(null)
+    }
+  }
+
+  const selectedGroup = groups.find((g) => g.id === selectedGroupId)
+
+  return (
+    <div className="flex h-full flex-col">
+      <TopBar
+        title="User Groups"
+        primaryAction={{
+          label: 'New Group',
+          onClick: () => setShowForm(true),
+          icon: 'ti-plus',
+        }}
+      />
+
+      <div className="flex-1 overflow-y-auto p-6">
+        {error && (
+          <div className="mb-4 rounded-md border border-semantic-red/20 bg-semantic-red/10 px-3 py-2 text-sm text-semantic-red">
+            {error}
+          </div>
+        )}
+        {success && (
+          <div className="mb-4 rounded-md border border-semantic-green/20 bg-semantic-green/10 px-3 py-2 text-sm text-semantic-green">
+            {success}
+          </div>
+        )}
+
+        {showForm && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Create user group</CardTitle>
+            </CardHeader>
+            <p className="mb-4 text-sm text-text-secondary">
+              Each group maps to exactly one role set. Operators inherit permissions from their assigned groups.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Group name</label>
+                <input
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                  placeholder="e.g. Finance Team"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Role set</label>
+                <SearchableSelect
+                  options={roleOptions}
+                  value={formRoleId}
+                  onChange={setFormRoleId}
+                  placeholder="Select role set..."
+                  searchPlaceholder="Search roles..."
+                  emptyMessage="No roles available. Create a role first."
+                  disabled={roles.length === 0}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="mb-1.5 block text-sm font-medium">Description (optional)</label>
+                <input
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                  placeholder="Short description"
+                />
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <LoadingButton
+                loading={actionLoading && pending?.type === 'create'}
+                disabled={!formName.trim() || !formRoleId}
+                onClick={() => setPending({ type: 'create' })}
+              >
+                Create group
+              </LoadingButton>
+              <LoadingButton variant="secondary" onClick={() => setShowForm(false)}>
+                Cancel
+              </LoadingButton>
+            </div>
+          </Card>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-2">
+          <ExpandableCard
+            title="Groups"
+            noPadding
+            headerClassName="mb-0 border-b border-border p-5"
+            bodyClassName="p-0"
+          >
+            {loading ? (
+              <p className="p-5 text-sm text-text-secondary">Loading...</p>
+            ) : (
+              <DataTable
+                data={groups}
+                keyExtractor={(g) => g.id}
+                columns={[
+                  {
+                    header: 'Group',
+                    accessor: (g) => (
+                      <button
+                        className={`text-left font-medium ${selectedGroupId === g.id ? 'text-brand-blue' : ''}`}
+                        onClick={() => setSelectedGroupId(g.id)}
+                      >
+                        {g.name}
+                      </button>
+                    ),
+                  },
+                  {
+                    header: 'Role set',
+                    accessor: (g) => g.role.name,
+                    className: 'text-sm text-text-secondary',
+                  },
+                  {
+                    header: 'Members',
+                    accessor: (g) => g.memberCount,
+                    className: 'text-sm text-text-secondary',
+                  },
+                ]}
+              />
+            )}
+          </ExpandableCard>
+
+          <ExpandableCard
+            title={selectedGroup ? `${selectedGroup.name} — role set` : 'Select a group'}
+            action={
+              selectedGroupId ? (
+                <div className="flex gap-2">
+                  <LoadingButton
+                    loading={actionLoading && pending?.type === 'saveRole'}
+                    disabled={!selectedRoleId || !roleDirty}
+                    className="px-3 py-1.5 text-xs"
+                    onClick={() => setPending({ type: 'saveRole' })}
+                  >
+                    Save role
+                  </LoadingButton>
+                  {selectedGroup && selectedGroup.memberCount === 0 && (
+                    <LoadingButton
+                      variant="danger"
+                      className="px-3 py-1.5 text-xs"
+                      loading={
+                        actionLoading &&
+                        pending?.type === 'delete' &&
+                        pending.groupId === selectedGroup.id
+                      }
+                      onClick={() =>
+                        setPending({
+                          type: 'delete',
+                          groupId: selectedGroup.id,
+                          groupName: selectedGroup.name,
+                        })
+                      }
+                    >
+                      Delete
+                    </LoadingButton>
+                  )}
+                </div>
+              ) : null
+            }
+          >
+            {selectedGroupId ? (
+              <div>
+                {roleDirty && (
+                  <p className="mb-3 text-xs text-amber-700">Unsaved role assignment</p>
+                )}
+                <label className="mb-1.5 block text-sm font-medium">Assigned role set</label>
+                <SearchableSelect
+                  options={roleOptions}
+                  value={selectedRoleId}
+                  onChange={setSelectedRoleId}
+                  placeholder="Select role set..."
+                  searchPlaceholder="Search roles..."
+                />
+                <p className="mt-3 text-xs text-text-secondary">
+                  All members of this group receive permissions from the selected role only.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-text-secondary">
+                Select a group to view or change its role set assignment.
+              </p>
+            )}
+          </ExpandableCard>
+        </div>
+      </div>
+
+      <ConfirmModal
+        open={pending?.type === 'create'}
+        title="Create user group?"
+        message={`Create group "${formName.trim()}" with the selected role set?`}
+        confirmLabel="Create"
+        loading={actionLoading}
+        onConfirm={executeCreate}
+        onCancel={() => setPending(null)}
+      />
+
+      <ConfirmModal
+        open={pending?.type === 'saveRole'}
+        title="Save role assignment?"
+        message={`Update role set for "${selectedGroup?.name}"? Members will receive updated permissions on next login.`}
+        confirmLabel="Save"
+        loading={actionLoading}
+        onConfirm={executeSaveRole}
+        onCancel={() => setPending(null)}
+      />
+
+      <ConfirmModal
+        open={pending?.type === 'delete'}
+        title="Delete group?"
+        message={`Permanently delete "${pending?.type === 'delete' ? pending.groupName : ''}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={actionLoading}
+        onConfirm={() =>
+          pending?.type === 'delete' ? executeDelete(pending.groupId) : undefined
+        }
+        onCancel={() => setPending(null)}
+      />
+    </div>
+  )
+}

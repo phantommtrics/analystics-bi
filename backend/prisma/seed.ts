@@ -1,33 +1,67 @@
 import 'dotenv/config'
 import bcrypt from 'bcryptjs'
 import { PrismaClient, UserStatus, UserType } from '@prisma/client'
+import { MODULES, actionsForModule } from '../src/auth/permissions.js'
 
 const prisma = new PrismaClient()
 
-const modules = [
-  'dashboard',
-  'statements',
-  'reports',
-  'agents',
-  'balance',
-  'customers',
-  'banks',
-  'remittance',
-  'aml',
-  'dashboard-builder',
-  'schedules',
-  'access',
-  'audit',
-]
-
-const actions = ['view', 'create', 'update', 'delete', 'approve']
-
 async function main() {
-  for (const moduleKey of modules) {
-    for (const actionKey of actions) {
+  // Remove legacy permission keys from prior seed
+  await prisma.rolePermission.deleteMany({
+    where: {
+      permission: {
+        actionKey: { in: ['create', 'update', 'approve'] },
+      },
+    },
+  })
+  await prisma.permission.deleteMany({
+    where: {
+      actionKey: { in: ['create', 'update', 'approve'] },
+    },
+  })
+
+  await prisma.rolePermission.deleteMany({
+    where: { permission: { moduleKey: 'access' } },
+  })
+  await prisma.permission.deleteMany({
+    where: { moduleKey: 'access' },
+  })
+
+  await prisma.rolePermission.deleteMany({
+    where: {
+      permission: { moduleKey: { in: ['system-config', 'access'] } },
+    },
+  })
+  await prisma.permission.deleteMany({
+    where: { moduleKey: { in: ['system-config', 'access'] } },
+  })
+
+  for (const moduleKey of MODULES) {
+    const allowed = actionsForModule(moduleKey)
+    await prisma.rolePermission.deleteMany({
+      where: {
+        permission: {
+          moduleKey,
+          actionKey: { notIn: [...allowed] },
+        },
+      },
+    })
+    await prisma.permission.deleteMany({
+      where: {
+        moduleKey,
+        actionKey: { notIn: [...allowed] },
+      },
+    })
+  }
+
+  for (const moduleKey of MODULES) {
+    for (const actionKey of actionsForModule(moduleKey)) {
       await prisma.permission.upsert({
         where: { moduleKey_actionKey: { moduleKey, actionKey } },
-        update: {},
+        update: {
+          name: `${moduleKey}:${actionKey}`,
+          description: `${actionKey} permission for ${moduleKey}`,
+        },
         create: {
           moduleKey,
           actionKey,
@@ -65,6 +99,7 @@ async function main() {
       passwordHash,
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
+      mustChangePassword: false,
     },
     create: {
       username,
@@ -72,6 +107,7 @@ async function main() {
       passwordHash,
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
+      mustChangePassword: false,
     },
   })
 

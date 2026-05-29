@@ -7,6 +7,7 @@ declare global {
         id: string
         userType: UserType
         permissions: string[]
+        mustChangePassword: boolean
       }
     }
   }

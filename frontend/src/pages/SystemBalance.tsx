@@ -1,6 +1,6 @@
 import { LineChart } from '../components/charts/LineChart'
 import { TopBar } from '../components/layout/TopBar'
-import { Card, CardHeader, CardTitle } from '../components/ui/Card'
+import { ExpandableCard } from '../components/ui/ExpandableCard'
 import { DataTable } from '../components/ui/DataTable'
 import { LiveDot } from '../components/ui/LiveDot'
 import { formatGMD } from '../lib/format'
@@ -64,17 +64,17 @@ export function SystemBalance() {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Intraday Float Trend</CardTitle>
-            </CardHeader>
+          <ExpandableCard title="Intraday Float Trend">
             <LineChart data={balanceTrendChart} height={300} area smooth />
-          </Card>
+          </ExpandableCard>
 
-          <Card noPadding className="flex flex-col">
-            <CardHeader className="mb-0 border-b border-border p-5">
-              <CardTitle>Real-time Reconciliation</CardTitle>
-            </CardHeader>
+          <ExpandableCard
+            title="Real-time Reconciliation"
+            noPadding
+            className="flex flex-col"
+            headerClassName="mb-0 border-b border-border p-5"
+            bodyClassName="p-0"
+          >
             <div className="flex-1 overflow-auto">
               <DataTable
                 data={reconciliationData}
@@ -128,7 +128,7 @@ export function SystemBalance() {
                 </div>
               </div>
             </div>
-          </Card>
+          </ExpandableCard>
         </div>
       </div>
     </div>

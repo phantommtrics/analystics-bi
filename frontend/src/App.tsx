@@ -3,11 +3,14 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RequirePermission } from './auth/RequirePermission'
 import { AppShell } from './components/layout/AppShell'
-import { AccessControl } from './pages/AccessControl'
+import { Roles } from './pages/admin/Roles'
+import { UserGroups } from './pages/admin/UserGroups'
+import { Operators } from './pages/admin/Operators'
 import { AgentNetwork } from './pages/AgentNetwork'
 import { AmlAlerts } from './pages/AmlAlerts'
 import { AuditLog } from './pages/AuditLog'
 import { Banks } from './pages/Banks'
+import { ChangePassword } from './pages/ChangePassword'
 import { Customers } from './pages/Customers'
 import { Dashboard } from './pages/Dashboard'
 import { DashboardBuilder } from './pages/DashboardBuilder'
@@ -33,6 +36,7 @@ export function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedRoute />}>
+          <Route path="/change-password" element={<ChangePassword />} />
           <Route element={<ShellLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route
@@ -54,7 +58,7 @@ export function App() {
             <Route
               path="/reports/builder"
               element={
-                <RequirePermission moduleKey="reports">
+                <RequirePermission moduleKey="report-builder">
                   <ReportBuilder />
                 </RequirePermission>
               }
@@ -123,11 +127,28 @@ export function App() {
                 </RequirePermission>
               }
             />
+            <Route path="/access" element={<Navigate to="/admin/system/operators" replace />} />
             <Route
-              path="/access"
+              path="/admin/system/roles"
               element={
-                <RequirePermission moduleKey="access">
-                  <AccessControl />
+                <RequirePermission moduleKey="system-config-roles">
+                  <Roles />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/admin/system/groups"
+              element={
+                <RequirePermission moduleKey="system-config-groups">
+                  <UserGroups />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/admin/system/operators"
+              element={
+                <RequirePermission moduleKey="system-config-operators">
+                  <Operators />
                 </RequirePermission>
               }
             />

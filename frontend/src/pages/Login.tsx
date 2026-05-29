@@ -13,21 +13,29 @@ export function Login() {
   const [submitting, setSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
-  if (user) {
-    return <Navigate to="/" replace />
-  }
-
   const from =
     (location.state as { from?: { pathname?: string } } | null)?.from
       ?.pathname ?? '/'
+
+  if (user) {
+    return (
+      <Navigate
+        to={user.mustChangePassword ? '/change-password' : from}
+        replace
+      />
+    )
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
     setSubmitting(true)
     try {
-      await login(identifier, password)
-      navigate(from, { replace: true })
+      const loggedInUser = await login(identifier, password)
+      navigate(
+        loggedInUser.mustChangePassword ? '/change-password' : from,
+        { replace: true },
+      )
     } catch {
       setError('Invalid username/email or password.')
     } finally {
@@ -89,7 +97,7 @@ export function Login() {
                     value={identifier}
                     onChange={(event) => setIdentifier(event.target.value)}
                     className="login-input w-full rounded-md border border-border bg-bg-secondary/80 py-2.5 pl-10 pr-3 text-sm text-text-primary outline-none transition focus:border-brand-blue"
-                    placeholder="owner or owner@bi.local"
+                    placeholder="username or example@example.com"
                     required
                   />
                 </div>

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { BarChart } from '../components/charts/BarChart'
 import { TopBar } from '../components/layout/TopBar'
-import { Card } from '../components/ui/Card'
 import { DataTable } from '../components/ui/DataTable'
+import { SqlEditor } from '../components/report/SqlEditor'
+import { ExpandableCard } from '../components/ui/ExpandableCard'
+import { LoadingButton } from '../components/ui/LoadingButton'
 
 export function ReportBuilder() {
   const [sql, setSql] = useState(
@@ -55,6 +57,34 @@ export function ReportBuilder() {
     },
   ]
 
+  const queryToolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <select className="rounded-sm border border-border bg-bg-primary px-2 py-1 text-sm outline-none">
+        <option>Bar Chart</option>
+        <option>Line Chart</option>
+        <option>Pie Chart</option>
+        <option>Table Only</option>
+      </select>
+      <select className="rounded-sm border border-border bg-bg-primary px-2 py-1 text-sm outline-none">
+        <option>Transactions DB</option>
+        <option>Users DB</option>
+        <option>Analytics DB</option>
+      </select>
+    </div>
+  )
+
+  const testQueryAction = (
+    <LoadingButton
+      variant="secondary"
+      loading={isValidating}
+      className="px-3 py-1.5 text-xs"
+      onClick={handleTest}
+    >
+      {!isValidating && <i className="ti ti-player-play"></i>}
+      Test Query
+    </LoadingButton>
+  )
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -68,72 +98,58 @@ export function ReportBuilder() {
         }}
       />
 
-      <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-        <div className="flex w-full flex-col border-r border-border bg-bg-primary lg:w-1/2">
-          <div className="flex items-center justify-between border-b border-border bg-bg-secondary p-4">
-            <div className="flex gap-2">
-              <select className="rounded-sm border border-border bg-bg-primary px-2 py-1 text-sm outline-none">
-                <option>Bar Chart</option>
-                <option>Line Chart</option>
-                <option>Pie Chart</option>
-                <option>Table Only</option>
-              </select>
-              <select className="rounded-sm border border-border bg-bg-primary px-2 py-1 text-sm outline-none">
-                <option>Transactions DB</option>
-                <option>Users DB</option>
-                <option>Analytics DB</option>
-              </select>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
+        <div className="flex min-h-0 w-full flex-col lg:w-1/2">
+          <ExpandableCard
+            title="Query editor"
+            noPadding
+            className="min-h-0 flex-1 rounded-none border-0 border-r border-border shadow-none"
+            headerClassName="mb-0 gap-3 border-b border-border bg-bg-secondary p-4"
+            bodyClassName="flex min-h-0 flex-1 flex-col"
+            expandedBodyClassName="flex flex-col"
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                {testQueryAction}
+              </div>
+            }
+          >
+            <div className="border-b border-border bg-bg-secondary px-4 py-3">
+              {queryToolbar}
             </div>
-            <button
-              onClick={handleTest}
-              disabled={isValidating}
-              className="flex items-center gap-2 rounded-sm border border-border bg-bg-primary px-3 py-1 text-sm font-medium transition-colors hover:bg-bg-tertiary disabled:opacity-50"
-            >
-              <i
-                className={`ti ${isValidating ? 'ti-loader animate-spin' : 'ti-player-play'}`}
-              ></i>
-              Test Query
-            </button>
-          </div>
-
-          <div className="flex-1 overflow-auto bg-[#1e1e1e] p-4 font-mono text-sm text-[#d4d4d4]">
-            <textarea
-              value={sql}
-              onChange={(e) => setSql(e.target.value)}
-              className="h-full w-full resize-none bg-transparent outline-none"
-              spellCheck={false}
-            />
-          </div>
-
-          {isValid !== null && (
-            <div
-              className={`flex items-center gap-2 p-2 text-xs font-medium ${isValid ? 'bg-semantic-green/10 text-semantic-green' : 'bg-semantic-red/10 text-semantic-red'}`}
-            >
-              <i
-                className={`ti ${isValid ? 'ti-check' : 'ti-alert-circle'}`}
-              ></i>
-              {isValid
-                ? 'Query valid · 7 rows returned · 42ms'
-                : 'Syntax error near line 4'}
+            <div className="flex min-h-[240px] flex-1 flex-col bg-[#1e1e1e] p-4 text-[#d4d4d4] lg:min-h-0">
+              <SqlEditor value={sql} onChange={setSql} minHeight="200px" />
             </div>
-          )}
+            {isValid !== null && (
+              <div
+                className={`flex shrink-0 items-center gap-2 px-4 py-2 text-xs font-medium ${isValid ? 'bg-semantic-green/10 text-semantic-green' : 'bg-semantic-red/10 text-semantic-red'}`}
+              >
+                <i className={`ti ${isValid ? 'ti-check' : 'ti-alert-circle'}`}></i>
+                {isValid
+                  ? 'Query valid · 7 rows returned · 42ms'
+                  : 'Syntax error near line 4'}
+              </div>
+            )}
+          </ExpandableCard>
         </div>
 
-        <div className="flex w-full flex-col space-y-6 overflow-y-auto bg-bg-tertiary p-6 lg:w-1/2">
-          <h2 className="text-sm font-medium uppercase tracking-wider text-text-secondary">
-            Live Preview
-          </h2>
+        <div className="flex min-h-0 w-full flex-col gap-6 overflow-y-auto bg-bg-tertiary p-6 lg:w-1/2">
+          <p className="text-sm font-medium uppercase tracking-wider text-text-secondary">
+            Live preview
+          </p>
 
-          <Card>
+          <ExpandableCard
+            title="Chart preview"
+            expandedBodyClassName="flex flex-col"
+          >
             <BarChart data={mockPreviewData} height={250} />
-          </Card>
+          </ExpandableCard>
 
-          <Card noPadding>
-            <div className="border-b border-border p-4">
-              <h3 className="text-sm font-medium">
-                Data Result (First 5 rows)
-              </h3>
-            </div>
+          <ExpandableCard
+            title="Data result (first 5 rows)"
+            noPadding
+            headerClassName="mb-0 border-b border-border px-4 py-4 sm:px-5"
+            bodyClassName="min-h-0"
+          >
             <DataTable
               data={mockTableData}
               keyExtractor={(r) => r.day}
@@ -155,7 +171,7 @@ export function ReportBuilder() {
                 },
               ]}
             />
-          </Card>
+          </ExpandableCard>
         </div>
       </div>
     </div>

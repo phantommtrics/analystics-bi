@@ -1,6 +1,10 @@
 import bcrypt from 'bcryptjs'
 import { TokenStatus, UserType } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import {
+  resolvePermissions,
+  userPermissionInclude,
+} from './permissions.js'
 import { hashToken, signAccessToken, signRefreshToken, verifyRefreshToken } from './tokens.js'
 
 const refreshTtlMs = 7 * 24 * 60 * 60 * 1000
@@ -12,17 +16,7 @@ export async function loginWithIdentifier(identifier: string, password: string) 
       OR: [{ email: normalized }, { username: normalized }],
       status: 'ACTIVE',
     },
-    include: {
-      roles: {
-        include: {
-          role: {
-            include: {
-              permissions: { include: { permission: true } },
-            },
-          },
-        },
-      },
-    },
+    include: userPermissionInclude,
   })
 
   if (!user) {
@@ -34,15 +28,12 @@ export async function loginWithIdentifier(identifier: string, password: string) 
     return null
   }
 
-  const permissions =
-    user.userType === UserType.OWNER
-      ? ['*']
-      : user.roles.flatMap((userRole) =>
-          userRole.role.permissions.map(
-            (rolePermission) =>
-              `${rolePermission.permission.moduleKey}:${rolePermission.permission.actionKey}`,
-          ),
-        )
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  })
+
+  const permissions = resolvePermissions(user)
 
   const accessToken = signAccessToken({
     sub: user.id,
@@ -67,10 +58,41 @@ export async function loginWithIdentifier(identifier: string, password: string) 
       id: user.id,
       username: user.username,
       email: user.email,
+      displayName: user.displayName,
       userType: user.userType,
+      mustChangePassword: user.mustChangePassword,
       permissions,
     },
   }
+}
+
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+) {
+  const user = await prisma.user.findUnique({ where: { id: userId } })
+  if (!user) {
+    return { ok: false as const, reason: 'not_found' as const }
+  }
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash)
+  if (!valid) {
+    return { ok: false as const, reason: 'invalid_password' as const }
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 12)
+  await prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash, mustChangePassword: false },
+  })
+
+  await prisma.refreshToken.updateMany({
+    where: { userId, status: TokenStatus.ACTIVE },
+    data: { status: TokenStatus.REVOKED },
+  })
+
+  return { ok: true as const }
 }
 
 export async function rotateRefreshToken(refreshToken: string) {

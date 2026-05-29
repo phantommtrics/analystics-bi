@@ -1,0 +1,29 @@
+.sql-editor .sql-keyword {
+  color: #569cd6;
+  font-weight: 600;
+}
+
+.sql-editor .sql-function {
+  color: #dcdcaa;
+}
+
+.sql-editor .sql-string {
+  color: #ce9178;
+}
+
+.sql-editor .sql-number {
+  color: #b5cea8;
+}
+
+.sql-editor .sql-comment {
+  color: #6a9955;
+  font-style: italic;
+}
+
+.sql-editor .sql-operator {
+  color: #d4d4d4;
+}
+
+.sql-editor .sql-identifier {
+  color: #9cdcfe;
+}

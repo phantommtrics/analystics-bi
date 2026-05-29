@@ -1,13 +1,15 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { login as loginRequest, me, refresh as refreshRequest } from './api'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { changePassword as changePasswordRequest, login as loginRequest, me, refresh as refreshRequest } from './api'
 import type { AuthUser } from './types'
 
 interface AuthContextValue {
   user: AuthUser | null
   accessToken: string | null
   isLoading: boolean
-  login: (identifier: string, password: string) => Promise<void>
+  login: (identifier: string, password: string) => Promise<AuthUser>
   logout: () => void
+  refreshUser: () => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   hasPermission: (moduleKey: string, actionKey?: string) => boolean
 }
 
@@ -19,6 +21,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+
+  const refreshUser = useCallback(async () => {
+    if (!accessToken) return
+    const profile = await me(accessToken)
+    setUser(profile)
+  }, [accessToken])
 
   useEffect(() => {
     let active = true
@@ -56,6 +64,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAccessToken(session.accessToken)
     setUser(session.user)
     localStorage.setItem(REFRESH_KEY, session.refreshToken)
+    return session.user
+  }
+
+  async function changePassword(currentPassword: string, newPassword: string) {
+    if (!accessToken) {
+      throw new Error('Not authenticated')
+    }
+    await changePasswordRequest(accessToken, currentPassword, newPassword)
+    const profile = await me(accessToken)
+    setUser(profile)
   }
 
   function logout() {
@@ -81,9 +99,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       login,
       logout,
+      refreshUser,
+      changePassword,
       hasPermission,
     }),
-    [user, accessToken, isLoading],
+    [user, accessToken, isLoading, refreshUser],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

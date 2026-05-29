@@ -11,3 +11,12 @@ protectedRouter.get('/health', (_req, res) => {
 protectedRouter.get('/reports', authenticate, authorize('reports', 'view'), (_req, res) => {
   res.json({ data: [], message: 'Reports access granted' })
 })
+
+protectedRouter.get(
+  '/report-builder',
+  authenticate,
+  authorize('report-builder', 'view'),
+  (_req, res) => {
+    res.json({ data: [], message: 'Report builder access granted' })
+  },
+)

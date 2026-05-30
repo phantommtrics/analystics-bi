@@ -4,6 +4,12 @@ import { prisma } from '../../prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize, authorizeAny } from '../../middleware/authorize.js'
 import { ACTIONS, MODULES, getModuleActionsMap } from '../../auth/permissions.js'
+import {
+  CUSTOM_DASHBOARD_ACTIONS,
+  buildPermissionModuleList,
+  ensureAllDashboardPermissions,
+  listCustomDashboardModuleKeys,
+} from '../../dashboards/permissions.js'
 import { paramId } from '../../utils/params.js'
 
 export const rolesRouter = Router()
@@ -25,13 +31,28 @@ const setPermissionsSchema = z.object({
 })
 
 rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (_req, res) => {
-  const permissions = await prisma.permission.findMany({
-    orderBy: [{ moduleKey: 'asc' }, { actionKey: 'asc' }],
-  })
+  await ensureAllDashboardPermissions()
+  const [permissions, customDashboardModules] = await Promise.all([
+    prisma.permission.findMany({
+      orderBy: [{ moduleKey: 'asc' }, { actionKey: 'asc' }],
+    }),
+    listCustomDashboardModuleKeys(),
+  ])
+
+  const moduleActions = {
+    ...getModuleActionsMap(),
+    ...Object.fromEntries(
+      customDashboardModules.map((moduleKey) => [
+        moduleKey,
+        [...CUSTOM_DASHBOARD_ACTIONS],
+      ]),
+    ),
+  }
+
   return res.json({
-    modules: MODULES,
+    modules: buildPermissionModuleList(MODULES, customDashboardModules),
     actions: ACTIONS,
-    moduleActions: getModuleActionsMap(),
+    moduleActions,
     permissions,
   })
 })

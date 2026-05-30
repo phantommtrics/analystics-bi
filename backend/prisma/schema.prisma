@@ -31,6 +31,21 @@ enum SslMode {
   REQUIRE
 }
 
+enum ReportCategory {
+  FINANCIAL
+  OPERATIONAL
+  COMPLIANCE
+  AGENT
+  GENERAL
+}
+
+enum ReportVisualization {
+  BAR_CHART
+  LINE_CHART
+  PIE_CHART
+  TABLE_ONLY
+}
+
 model User {
   id                 String            @id @default(cuid())
   username           String            @unique
@@ -45,6 +60,10 @@ model User {
   groups             UserGroupMember[]
   refreshTokens      RefreshToken[]
   dataSources        DataSource[]
+  savedReports       SavedReport[]     @relation("ReportCreatedBy")
+  updatedReports     SavedReport[]     @relation("ReportUpdatedBy")
+  dashboards         Dashboard[]       @relation("DashboardCreatedBy")
+  updatedDashboards  Dashboard[]       @relation("DashboardUpdatedBy")
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 }
@@ -139,6 +158,51 @@ model DataSource {
   isActive          Boolean        @default(true)
   createdById       String?
   createdBy         User?          @relation(fields: [createdById], references: [id])
+  savedReports      SavedReport[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+}
+
+model SavedReport {
+  id            String              @id @default(cuid())
+  name          String
+  description   String?
+  category      ReportCategory      @default(GENERAL)
+  sql           String              @db.Text
+  visualization ReportVisualization @default(BAR_CHART)
+  dataSourceId  String
+  dataSource    DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  createdById   String?
+  createdBy     User?               @relation("ReportCreatedBy", fields: [createdById], references: [id])
+  updatedById   String?
+  updatedBy     User?               @relation("ReportUpdatedBy", fields: [updatedById], references: [id])
+  deletedAt     DateTime?
+  deletedById   String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([deletedAt])
+  @@index([name])
+  @@index([category])
+}
+
+model Dashboard {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  layout      Json
+  isPublished Boolean   @default(false)
+  publishedAt DateTime?
+  createdById String?
+  createdBy   User?     @relation("DashboardCreatedBy", fields: [createdById], references: [id])
+  updatedById String?
+  updatedBy   User?     @relation("DashboardUpdatedBy", fields: [updatedById], references: [id])
+  deletedAt   DateTime?
+  deletedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([deletedAt])
+  @@index([name])
+  @@index([isPublished])
 }

@@ -1,17 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { dashboardsApi, type DashboardSummary } from '../../api/dashboards'
 import { useAuth } from '../../auth/AuthContext'
+import { canViewCustomDashboard } from '../../lib/dashboardFilters'
 
 const navGroups = [
   {
+    key: 'overview',
     label: 'Overview',
     items: [
-      {
-        label: 'Dashboard',
-        icon: 'ti-layout-dashboard',
-        path: '/',
-        moduleKey: 'dashboard',
-      },
       {
         label: 'Reports',
         icon: 'ti-report-analytics',
@@ -119,6 +116,11 @@ const systemConfigItems = [
     path: '/admin/system/operators',
     moduleKey: 'system-config-operators',
   },
+  {
+    label: 'Data Sources',
+    path: '/admin/system/datasources',
+    moduleKey: 'system-config-datasources',
+  },
 ] as const
 
 interface SidebarProps {
@@ -127,8 +129,36 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
-  const { user, hasPermission, logout } = useAuth()
+  const { user, accessToken, hasPermission, logout } = useAuth()
   const location = useLocation()
+  const [customDashboards, setCustomDashboards] = useState<DashboardSummary[]>([])
+  const canViewMainDashboard = hasPermission('dashboard', 'view')
+  const dashboardActive =
+    location.pathname === '/' || location.pathname.startsWith('/dashboards/')
+  const [dashboardOpen, setDashboardOpen] = useState<boolean>(dashboardActive)
+  const permissions = user?.permissions ?? []
+  const visibleCustomDashboards = customDashboards.filter((dashboard) =>
+    canViewCustomDashboard(permissions, dashboard.id, user?.userType),
+  )
+  const showDashboardNav = canViewMainDashboard
+
+  useEffect(() => {
+    if (!accessToken) {
+      setCustomDashboards([])
+      return
+    }
+    dashboardsApi
+      .list(accessToken, undefined, { accessibleOnly: true })
+      .then(setCustomDashboards)
+      .catch(() => setCustomDashboards([]))
+  }, [accessToken])
+
+  useEffect(() => {
+    if (dashboardActive) {
+      setDashboardOpen(true)
+    }
+  }, [dashboardActive])
+
   const visibleSystemConfigItems = systemConfigItems.filter((item) =>
     hasPermission(item.moduleKey, 'view'),
   )
@@ -166,6 +196,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             )
             const showGroup =
               allowedItems.length > 0 ||
+              (group.key === 'overview' && showDashboardNav) ||
               (group.label === 'Admin' && canAccessSystemConfig)
             if (!showGroup) {
               return null
@@ -177,6 +208,57 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                   {group.label}
                 </div>
                 <div className="space-y-1">
+                  {group.key === 'overview' && showDashboardNav && (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setDashboardOpen((o) => !o)}
+                        className={`flex w-full items-center gap-3 rounded-sm px-3 py-2 text-sm transition-colors ${
+                          dashboardActive
+                            ? 'bg-white/10 font-medium text-white'
+                            : 'text-[#e8eaf0] hover:bg-white/5'
+                        }`}
+                      >
+                        <i className="ti ti-layout-dashboard text-xl"></i>
+                        <span className="flex-1 text-left">Dashboard</span>
+                        <i
+                          className={`ti ti-chevron-down text-sm transition-transform ${dashboardOpen ? 'rotate-180' : ''}`}
+                        ></i>
+                      </button>
+                      {dashboardOpen && (
+                        <div className="ml-4 mt-1 space-y-1 border-l border-white/10 pl-2">
+                          {canViewMainDashboard && (
+                            <NavLink
+                              to="/"
+                              end
+                              onClick={onClose}
+                              className={({ isActive }) => `
+                                block rounded-sm px-3 py-1.5 text-sm transition-colors
+                                ${isActive ? 'bg-white/10 font-medium text-white' : 'text-[#c5c9d4] hover:bg-white/5'}
+                              `}
+                            >
+                              Main Dashboard
+                            </NavLink>
+                          )}
+                          {visibleCustomDashboards.map((dashboard) => (
+                            <NavLink
+                              key={dashboard.id}
+                              to={`/dashboards/${dashboard.id}`}
+                              onClick={onClose}
+                              className={({ isActive }) => `
+                                block truncate rounded-sm px-3 py-1.5 text-sm transition-colors
+                                ${isActive ? 'bg-white/10 font-medium text-white' : 'text-[#c5c9d4] hover:bg-white/5'}
+                              `}
+                              title={dashboard.name}
+                            >
+                              {dashboard.name}
+                            </NavLink>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {allowedItems.map((item, j) => (
                     <NavLink
                       key={j}

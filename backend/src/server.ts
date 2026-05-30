@@ -5,6 +5,8 @@ import { authRouter } from './routes/auth.js'
 import { protectedRouter } from './routes/protected.js'
 import { adminRouter } from './routes/admin/index.js'
 import { reportBuilderRouter } from './routes/report-builder.js'
+import { reportsRouter } from './routes/reports.js'
+import { dashboardsRouter } from './routes/dashboards.js'
 
 const app = express()
 
@@ -22,6 +24,8 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/report-builder', reportBuilderRouter)
+app.use('/api/reports', reportsRouter)
+app.use('/api/dashboards', dashboardsRouter)
 app.use('/api', protectedRouter)
 
 app.listen(env.PORT, () => {

@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from 'react'
 import type { Permission } from '../../api/admin'
 
+const CUSTOM_DASHBOARD_PREFIX = 'custom-dashboard-'
+
 const ACTION_LABELS: Record<string, string> = {
   view: 'View',
   export_pdf: 'PDF',
@@ -11,14 +13,26 @@ const ACTION_LABELS: Record<string, string> = {
 }
 
 const MODULE_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard',
   'system-config-roles': 'System Config — Roles',
   'system-config-groups': 'System Config — User Groups',
   'system-config-operators': 'System Config — Operators',
 }
 
-function formatModule(key: string) {
+function isCustomDashboardModule(key: string) {
+  return key.startsWith(CUSTOM_DASHBOARD_PREFIX)
+}
+
+function formatModule(key: string, permissions: Permission[]) {
   if (MODULE_LABELS[key]) {
     return MODULE_LABELS[key]
+  }
+  if (isCustomDashboardModule(key)) {
+    const match = permissions.find((p) => p.moduleKey === key)
+    if (match?.name) {
+      return match.name
+    }
+    return 'Custom dashboard'
   }
   return key
     .split('-')
@@ -111,52 +125,68 @@ export function PermissionMatrix({
           </tr>
         </thead>
         <tbody>
-          {modules.map((moduleKey) => (
-            <tr key={moduleKey}>
-              <td className="border border-border px-3 py-2 font-medium text-text-primary">
-                {formatModule(moduleKey)}
-              </td>
-              {actions.map((actionKey) => {
-                const allowedForModule =
-                  moduleActions?.[moduleKey]?.includes(actionKey) ?? true
-                const id = allowedForModule
-                  ? permissionMap.get(`${moduleKey}:${actionKey}`)
-                  : undefined
-                const selected = id ? selectedIds.has(id) : false
-                return (
-                  <td
-                    key={actionKey}
-                    className={`border border-border p-0 text-center ${
-                      id ? 'cursor-pointer select-none' : 'bg-bg-secondary/50'
-                    }`}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      if (id) startDrag(moduleKey, actionKey)
-                    }}
-                    onMouseEnter={() => {
-                      if (id) continueDrag(moduleKey, actionKey)
-                    }}
-                  >
-                    <div
-                      className={`flex h-9 items-center justify-center transition-colors ${
-                        selected
-                          ? 'bg-brand-blue text-white'
-                          : id
-                            ? 'hover:bg-brand-blue/10'
-                            : ''
+          {modules.map((moduleKey) => {
+            const isSubDashboard = isCustomDashboardModule(moduleKey)
+            return (
+              <tr
+                key={moduleKey}
+                className={isSubDashboard ? 'bg-bg-secondary/30' : undefined}
+              >
+                <td
+                  className={`border border-border py-2 font-medium text-text-primary ${
+                    isSubDashboard ? 'pl-8 pr-3 text-sm font-normal text-text-secondary' : 'px-3'
+                  }`}
+                >
+                  {isSubDashboard && (
+                    <span className="mr-1.5 text-text-secondary" aria-hidden="true">
+                      ↳
+                    </span>
+                  )}
+                  {formatModule(moduleKey, permissions)}
+                </td>
+                {actions.map((actionKey) => {
+                  const allowedForModule =
+                    moduleActions?.[moduleKey]?.includes(actionKey) ?? true
+                  const id = allowedForModule
+                    ? permissionMap.get(`${moduleKey}:${actionKey}`)
+                    : undefined
+                  const selected = id ? selectedIds.has(id) : false
+                  return (
+                    <td
+                      key={actionKey}
+                      className={`border border-border p-0 text-center ${
+                        id ? 'cursor-pointer select-none' : 'bg-bg-secondary/50'
                       }`}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        if (id) startDrag(moduleKey, actionKey)
+                      }}
+                      onMouseEnter={() => {
+                        if (id) continueDrag(moduleKey, actionKey)
+                      }}
                     >
-                      {selected && <i className="ti ti-check text-sm"></i>}
-                    </div>
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
+                      <div
+                        className={`flex h-9 items-center justify-center transition-colors ${
+                          selected
+                            ? 'bg-brand-blue text-white'
+                            : id
+                              ? 'hover:bg-brand-blue/10'
+                              : ''
+                        }`}
+                      >
+                        {selected && <i className="ti ti-check text-sm"></i>}
+                      </div>
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
       <p className="mt-2 text-xs text-text-secondary">
-        Click or drag across cells to select permissions.
+        Click or drag across cells to select permissions. Custom dashboards listed under
+        Dashboard require both Dashboard view and the dashboard&apos;s own view permission.
       </p>
     </div>
   )

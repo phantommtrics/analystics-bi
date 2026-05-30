@@ -6,6 +6,7 @@ import { AppShell } from './components/layout/AppShell'
 import { Roles } from './pages/admin/Roles'
 import { UserGroups } from './pages/admin/UserGroups'
 import { Operators } from './pages/admin/Operators'
+import { DataSources } from './pages/admin/DataSources'
 import { AgentNetwork } from './pages/AgentNetwork'
 import { AmlAlerts } from './pages/AmlAlerts'
 import { AuditLog } from './pages/AuditLog'
@@ -13,6 +14,7 @@ import { Banks } from './pages/Banks'
 import { ChangePassword } from './pages/ChangePassword'
 import { Customers } from './pages/Customers'
 import { Dashboard } from './pages/Dashboard'
+import { CustomDashboard } from './pages/CustomDashboard'
 import { DashboardBuilder } from './pages/DashboardBuilder'
 import { FinancialStatements } from './pages/FinancialStatements'
 import { Remittance } from './pages/Remittance'
@@ -38,7 +40,15 @@ export function App() {
         <Route element={<ProtectedRoute />}>
           <Route path="/change-password" element={<ChangePassword />} />
           <Route element={<ShellLayout />}>
-            <Route path="/" element={<Dashboard />} />
+            <Route
+              path="/"
+              element={
+                <RequirePermission moduleKey="dashboard">
+                  <Dashboard />
+                </RequirePermission>
+              }
+            />
+            <Route path="/dashboards/:id" element={<CustomDashboard />} />
             <Route
               path="/statements"
               element={
@@ -149,6 +159,14 @@ export function App() {
               element={
                 <RequirePermission moduleKey="system-config-operators">
                   <Operators />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/admin/system/datasources"
+              element={
+                <RequirePermission moduleKey="system-config-datasources">
+                  <DataSources />
                 </RequirePermission>
               }
             />

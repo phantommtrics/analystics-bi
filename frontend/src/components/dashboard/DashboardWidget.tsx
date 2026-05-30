@@ -8,6 +8,7 @@ import {
   type ReportVisualization,
 } from '../../lib/reportConstants'
 import { rowsToChartData, rowsToPieData } from '../../lib/queryResultChart'
+import { serializeQueryFilters } from '../../lib/dashboardFilters'
 import { ReportChartPreview } from '../report/ReportChartPreview'
 import { DataTable } from '../ui/DataTable'
 import type { Column } from '../ui/DataTable'
@@ -40,6 +41,8 @@ export function DashboardWidget({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<QueryExecuteResult | null>(null)
 
+  const filterKey = queryFilters ? serializeQueryFilters(queryFilters) : ''
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -60,7 +63,7 @@ export function DashboardWidget({
     return () => {
       cancelled = true
     }
-  }, [accessToken, report.id, queryFilters])
+  }, [accessToken, report.id, filterKey])
 
   const chartData = useMemo(() => {
     if (!result?.rows.length) return { labels: [], series: [] }

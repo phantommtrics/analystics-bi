@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { DashboardDateFilter } from '../components/dashboard/DashboardDateFilter'
 import { TopBar } from '../components/layout/TopBar'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { DashboardBuilderPanel } from '../components/dashboard/DashboardBuilderPanel'
@@ -17,12 +18,17 @@ import {
   type DashboardTab,
 } from '../lib/dashboardTabs'
 import { formatReportDate } from '../lib/reportConstants'
+import { useDashboardFilters } from '../hooks/useDashboardFilters'
+import { filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
 
 const initialTab = createDashboardTab({ title: 'Dashboard 1' })
 
 export function DashboardBuilder() {
   const { accessToken, hasPermission } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { filters, setFilters } = useDashboardFilters()
+  const queryFilters = useMemo(() => filtersToQueryRecord(filters), [filters])
+  const filterKey = useMemo(() => serializeQueryFilters(queryFilters), [queryFilters])
 
   const canEdit = hasPermission('dashboard-builder', 'edit')
   const canDelete = hasPermission('dashboard-builder', 'delete')
@@ -428,6 +434,11 @@ export function DashboardBuilder() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <DashboardDateFilter
+                filters={filters}
+                onChange={setFilters}
+                compact
+              />
               {canEdit && activeTab.savedDashboardId && !layoutDirty && (
                 activeTab.isPublished ? (
                   <button
@@ -466,11 +477,13 @@ export function DashboardBuilder() {
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-4">
             <DashboardGrid
+              key={filterKey}
               accessToken={accessToken ?? ''}
               layout={activeTab.layout}
               reports={reports}
               reportsById={reportsById}
               canEdit={canEdit}
+              queryFilters={queryFilters}
               onChange={setLayout}
             />
           </div>
@@ -490,17 +503,21 @@ export function DashboardBuilder() {
                 {activeTab.layout.widgets.length === 1 ? '' : 's'} · read-only
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setLayoutPreviewExpanded(false)}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-bg-primary px-3 py-2 text-sm font-medium transition-colors hover:bg-bg-secondary"
-            >
-              <i className="ti ti-arrows-minimize text-base"></i>
-              Collapse
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <DashboardDateFilter filters={filters} onChange={setFilters} compact />
+              <button
+                type="button"
+                onClick={() => setLayoutPreviewExpanded(false)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-primary px-3 py-2 text-sm font-medium transition-colors hover:bg-bg-secondary"
+              >
+                <i className="ti ti-arrows-minimize text-base"></i>
+                Collapse
+              </button>
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
             <DashboardGrid
+              key={filterKey}
               accessToken={accessToken ?? ''}
               layout={activeTab.layout}
               reports={reports}
@@ -508,6 +525,7 @@ export function DashboardBuilder() {
               canEdit={false}
               onChange={setLayout}
               previewMode
+              queryFilters={queryFilters}
             />
           </div>
         </div>

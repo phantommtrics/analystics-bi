@@ -17,15 +17,31 @@ export function SqlEditor({
 }: SqlEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLPreElement>(null)
+  const gutterRef = useRef<HTMLDivElement>(null)
 
   const highlighted = useMemo(() => highlightSql(value), [value])
+
+  const lineCount = useMemo(() => Math.max(1, value.split('\n').length), [value])
+
+  const lineNumbersText = useMemo(
+    () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join('\n'),
+    [lineCount],
+  )
+
+  const gutterWidthCh = Math.max(2, String(lineCount).length) + 1.5
 
   const syncScroll = useCallback(() => {
     const textarea = textareaRef.current
     const highlight = highlightRef.current
-    if (!textarea || !highlight) return
-    highlight.scrollTop = textarea.scrollTop
-    highlight.scrollLeft = textarea.scrollLeft
+    const gutter = gutterRef.current
+    if (!textarea) return
+    if (highlight) {
+      highlight.scrollTop = textarea.scrollTop
+      highlight.scrollLeft = textarea.scrollLeft
+    }
+    if (gutter) {
+      gutter.scrollTop = textarea.scrollTop
+    }
   }, [])
 
   const handleKeyDown = useCallback(
@@ -47,27 +63,38 @@ export function SqlEditor({
 
   return (
     <div
-      className={`sql-editor relative min-h-0 flex-1 overflow-hidden font-mono text-sm leading-relaxed ${className}`}
+      className={`sql-editor flex min-h-0 flex-1 overflow-hidden font-mono text-sm leading-relaxed ${className}`}
       style={{ minHeight }}
     >
-      <pre
-        ref={highlightRef}
+      <div
+        ref={gutterRef}
         aria-hidden
-        className="sql-editor-highlight pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre-wrap break-words p-0"
-        dangerouslySetInnerHTML={{ __html: highlighted + '\n' }}
-      />
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={syncScroll}
-        onKeyDown={handleKeyDown}
-        spellCheck={false}
-        autoCapitalize="off"
-        autoComplete="off"
-        autoCorrect="off"
-        className="sql-editor-input relative z-[1] m-0 block h-full min-h-[inherit] w-full resize-none overflow-auto whitespace-pre-wrap break-words border-0 bg-transparent p-0 text-transparent caret-[#aeafad] outline-none selection:bg-[#264f78] selection:text-transparent"
-      />
+        className="sql-editor-gutter shrink-0 overflow-hidden border-r border-[#3c3c3c] bg-[#1b1b1b] text-[#858585] select-none"
+        style={{ width: `${gutterWidthCh}ch` }}
+      >
+        <pre className="m-0 px-2 py-0 text-right text-sm leading-relaxed">{lineNumbersText}</pre>
+      </div>
+
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <pre
+          ref={highlightRef}
+          aria-hidden
+          className="sql-editor-highlight pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre-wrap break-words px-3 py-0"
+          dangerouslySetInnerHTML={{ __html: highlighted + '\n' }}
+        />
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={syncScroll}
+          onKeyDown={handleKeyDown}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          className="sql-editor-input relative z-[1] m-0 block h-full min-h-[inherit] w-full resize-none overflow-auto whitespace-pre-wrap break-words border-0 bg-transparent px-3 py-0 text-transparent caret-[#aeafad] outline-none selection:bg-[#264f78] selection:text-transparent"
+        />
+      </div>
     </div>
   )
 }

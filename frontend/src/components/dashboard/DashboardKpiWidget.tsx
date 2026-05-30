@@ -3,6 +3,7 @@ import { reportsApi } from '../../api/reports'
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import type { KpiWidgetLayout } from '../../lib/dashboardLayout'
 import { resolveKpiDisplay } from '../../lib/kpiReportData'
+import { serializeQueryFilters } from '../../lib/dashboardFilters'
 import { iconClassName } from '../../lib/kpiWidgetConstants'
 
 interface DashboardKpiWidgetProps {
@@ -31,6 +32,8 @@ export function DashboardKpiWidget({
   const [result, setResult] = useState<QueryExecuteResult | null>(null)
 
   const linked = Boolean(widget.savedReportId) && Boolean(widget.valueColumn ?? widget.labelColumn)
+
+  const filterKey = queryFilters ? serializeQueryFilters(queryFilters) : ''
 
   useEffect(() => {
     if (!linked || !widget.savedReportId) {
@@ -68,7 +71,7 @@ export function DashboardKpiWidget({
     widget.labelColumn,
     widget.valueColumn,
     widget.rowIndex,
-    queryFilters,
+    filterKey,
   ])
 
   const display = resolveKpiDisplay(widget, result)

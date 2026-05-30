@@ -31,6 +31,7 @@ interface KpiWidgetEditModalProps {
   accessToken: string
   reports: SavedReportSummary[]
   widget: KpiWidgetLayout | null
+  queryFilters?: Record<string, string>
   onConfirm: (patch: KpiWidgetEditPatch) => void
   onCancel: () => void
 }
@@ -40,6 +41,7 @@ export function KpiWidgetEditModal({
   accessToken,
   reports,
   widget,
+  queryFilters,
   onConfirm,
   onCancel,
 }: KpiWidgetEditModalProps) {
@@ -82,7 +84,7 @@ export function KpiWidgetEditModal({
       setPairsLoading(true)
       setPairsError('')
       try {
-        const result = await reportsApi.execute(accessToken, reportId)
+        const result = await reportsApi.execute(accessToken, reportId, queryFilters)
         setPairs(extractKpiPairOptions(result))
       } catch (err) {
         setPairs([])
@@ -91,7 +93,7 @@ export function KpiWidgetEditModal({
         setPairsLoading(false)
       }
     },
-    [accessToken],
+    [accessToken, queryFilters],
   )
 
   useEffect(() => {
@@ -100,7 +102,7 @@ export function KpiWidgetEditModal({
       return
     }
     void loadPairs(savedReportId)
-  }, [open, useReportData, savedReportId, loadPairs])
+  }, [open, useReportData, savedReportId, loadPairs, queryFilters])
 
   const selectedPairId = useMemo(() => {
     const column = valueColumn ?? labelColumn

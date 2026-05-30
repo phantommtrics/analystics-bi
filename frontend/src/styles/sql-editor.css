@@ -1,3 +1,7 @@
+.sql-editor-gutter pre {
+  font-variant-numeric: tabular-nums;
+}
+
 .sql-editor .sql-keyword {
   color: #569cd6;
   font-weight: 600;

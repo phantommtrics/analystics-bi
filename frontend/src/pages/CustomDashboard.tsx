@@ -6,7 +6,7 @@ import { dashboardsApi, type DashboardDetail } from '../api/dashboards'
 import { reportsApi, type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import { useDashboardFilters } from '../hooks/useDashboardFilters'
-import { canViewCustomDashboard, dashboardModuleKey, filtersToQueryRecord } from '../lib/dashboardFilters'
+import { canViewCustomDashboard, dashboardModuleKey, filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
 import type { DashboardLayout } from '../lib/dashboardLayout'
 
 export function CustomDashboard() {
@@ -22,6 +22,7 @@ export function CustomDashboard() {
   const permissions = user?.permissions ?? []
   const canViewCustom = id ? canViewCustomDashboard(permissions, id, user?.userType) : false
   const queryFilters = useMemo(() => filtersToQueryRecord(filters), [filters])
+  const filterKey = useMemo(() => serializeQueryFilters(queryFilters), [queryFilters])
 
   const loadDashboard = useCallback(async () => {
     if (!accessToken || !id) return
@@ -92,6 +93,7 @@ export function CustomDashboard() {
               <p className="mb-4 text-sm text-text-secondary">{dashboard.description}</p>
             )}
             <DashboardGrid
+              key={filterKey}
               accessToken={accessToken!}
               layout={layout}
               reports={reports}

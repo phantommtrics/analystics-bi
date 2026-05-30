@@ -99,6 +99,6 @@ export const reportsApi = {
   execute: (token: string, id: string, filters?: Record<string, string>) =>
     reportsFetch<QueryExecuteResult>(`/${id}/execute`, token, {
       method: 'POST',
-      body: JSON.stringify(filters ? { filters } : {}),
+      body: JSON.stringify({ filters: filters ?? {} }),
     }),
 }

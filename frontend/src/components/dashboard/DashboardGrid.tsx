@@ -323,6 +323,7 @@ export function DashboardGrid({
         accessToken={accessToken}
         reports={reports}
         widget={editingKpi ?? null}
+        queryFilters={queryFilters}
         onCancel={() => setEditingKpiId(null)}
         onConfirm={(patch: KpiWidgetEditPatch) => {
           if (editingKpiId) patchWidget(editingKpiId, patch)

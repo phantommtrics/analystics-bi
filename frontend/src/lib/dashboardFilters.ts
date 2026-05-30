@@ -30,11 +30,34 @@ export function filtersFromSearchParams(params: URLSearchParams): DashboardFilte
   return defaultDashboardFilters()
 }
 
+function addDays(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T12:00:00`)
+  date.setDate(date.getDate() + days)
+  return formatIsoDate(date)
+}
+
+/** Map dashboard date range to SQL placeholder values used by saved reports. */
 export function filtersToQueryRecord(filters: DashboardFilters): Record<string, string> {
+  const { dateFrom, dateTo } = filters
   return {
-    dateFrom: filters.dateFrom,
-    dateTo: filters.dateTo,
+    dateFrom,
+    dateTo,
+    startDate: dateFrom,
+    endDate: dateTo,
+    start_date: dateFrom,
+    end_date: dateTo,
+    fromDate: dateFrom,
+    toDate: dateTo,
+    from_date: dateFrom,
+    to_date: dateTo,
+    dateToEnd: `${dateTo} 23:59:59`,
+    endDateTime: `${dateTo} 23:59:59.999`,
+    dateToExclusive: addDays(dateTo, 1),
   }
+}
+
+export function serializeQueryFilters(filters: Record<string, string>): string {
+  return JSON.stringify(filters)
 }
 
 export function dashboardModuleKey(dashboardId: string): string {

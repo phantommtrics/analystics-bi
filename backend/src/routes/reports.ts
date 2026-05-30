@@ -96,9 +96,7 @@ reportsRouter.post('/:id/execute', viewReports, async (req, res) => {
   }
 
   try {
-    const sql = parsed.data.filters
-      ? applySqlFilters(report.sql, parsed.data.filters)
-      : report.sql
+    const sql = applySqlFilters(report.sql, parsed.data.filters ?? {})
     const result = await executeDataSourceQuery(report.dataSourceId, sql)
     return res.json(result)
   } catch (error) {

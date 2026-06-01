@@ -1,8 +1,9 @@
-import { ReportScheduleStatus } from '@prisma/client'
+import { ReportScheduleRecurrence, ReportScheduleStatus } from '@prisma/client'
 import { env } from '../env.js'
 import { sendReportScheduleEmail } from '../mail/reportSchedule.js'
 import { prisma } from '../prisma.js'
-import { getGroupRecipientEmails } from './service.js'
+import { isRecurring } from './recurrence.js'
+import { getGroupRecipientEmails, scheduleNextRunAfterDelivery } from './service.js'
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let processing = false
@@ -54,7 +55,12 @@ export async function processDueReportSchedules() {
 
 async function deliverSchedule(schedule: {
   id: string
+  recurrence: ReportScheduleRecurrence
   scheduledAt: Date
+  timeMinutes: number | null
+  dayOfWeek: number | null
+  dayOfMonth: number | null
+  timezoneOffsetMinutes: number
   report: { id: string; name: string; deletedAt: Date | null; isPublished: boolean }
   group: { id: string; name: string }
 }) {
@@ -111,12 +117,29 @@ async function deliverSchedule(schedule: {
     return
   }
 
+  const now = new Date()
+  const lastError = failures.length > 0 ? failures.join('; ') : null
+
+  if (isRecurring(schedule.recurrence)) {
+    const nextRun = scheduleNextRunAfterDelivery(schedule)
+    await prisma.reportSchedule.update({
+      where: { id: schedule.id },
+      data: {
+        status: ReportScheduleStatus.ACTIVE,
+        scheduledAt: nextRun,
+        lastSentAt: now,
+        lastError,
+      },
+    })
+    return
+  }
+
   await prisma.reportSchedule.update({
     where: { id: schedule.id },
     data: {
       status: ReportScheduleStatus.COMPLETED,
-      lastSentAt: new Date(),
-      lastError: failures.length > 0 ? failures.join('; ') : null,
+      lastSentAt: now,
+      lastError,
     },
   })
 }

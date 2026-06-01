@@ -4,6 +4,7 @@ import { TopBar } from '../components/layout/TopBar'
 import { Badge } from '../components/ui/Badge'
 import { Card } from '../components/ui/Card'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
+import { ScrollableTabList } from '../components/ui/ScrollableTabList'
 import { reportsApi, type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import {
@@ -92,20 +93,15 @@ export function ReportCatalog() {
             : undefined
         }
         toolbar={
-          <div className="flex flex-col items-start justify-between gap-3 lg:flex-row lg:items-center">
-            <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-bg-secondary p-1">
-              {categoryFilters.map((cat) => (
-                <button
-                  key={cat.value}
-                  type="button"
-                  onClick={() => setActiveCategory(cat.value)}
-                  className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${activeCategory === cat.value ? 'bg-bg-primary text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'}`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-            <div className="relative w-full lg:w-80">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <ScrollableTabList
+              className="w-full min-w-0 lg:flex-1"
+              items={categoryFilters}
+              value={activeCategory}
+              onChange={setActiveCategory}
+              ariaLabel="Report category filters"
+            />
+            <div className="relative w-full shrink-0 lg:w-80">
               <i className="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary"></i>
               <input
                 type="text"

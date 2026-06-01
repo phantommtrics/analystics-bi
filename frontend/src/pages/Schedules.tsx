@@ -7,10 +7,12 @@ import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { DataTable } from '../components/ui/DataTable'
 import {
   schedulesApi,
+  type CreateSchedulePayload,
   type ReportScheduleSummary,
   type ReportScheduleStatus,
   type ScheduleGroupOption,
   type SchedulableReportOption,
+  type UpdateSchedulePayload,
 } from '../api/schedules'
 import { useAuth } from '../auth/AuthContext'
 
@@ -36,6 +38,10 @@ function formatScheduleDate(iso: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   })
+}
+
+function isOneTimeCompleted(schedule: ReportScheduleSummary) {
+  return schedule.recurrence === 'ONCE' && schedule.status === 'COMPLETED'
 }
 
 export function Schedules() {
@@ -87,18 +93,18 @@ export function Schedules() {
     [schedules],
   )
 
-  async function handleCreate(data: {
-    reportId: string
-    groupId: string
-    scheduledAt: string
-  }) {
+  async function handleCreate(data: CreateSchedulePayload) {
     if (!accessToken) return
     setActionLoading(true)
     setError('')
     try {
       await schedulesApi.create(accessToken, data)
       setFormOpen(false)
-      setSuccess('Schedule created. Recipients will be emailed at the due time.')
+      setSuccess(
+        data.recurrence === 'ONCE'
+          ? 'Schedule created. Recipients will be emailed at the due time.'
+          : 'Recurring schedule created. Emails will be sent on each occurrence.',
+      )
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create schedule')
@@ -107,18 +113,22 @@ export function Schedules() {
     }
   }
 
-  async function handleUpdate(data: {
-    reportId: string
-    groupId: string
-    scheduledAt: string
-  }) {
+  async function handleUpdate(data: CreateSchedulePayload) {
     if (!accessToken || !editing) return
     setActionLoading(true)
     setError('')
     try {
-      await schedulesApi.update(accessToken, editing.id, {
-        scheduledAt: data.scheduledAt,
-      })
+      const payload: UpdateSchedulePayload = {
+        recurrence: data.recurrence,
+        timeMinutes: data.timeMinutes,
+        dayOfWeek: data.dayOfWeek,
+        dayOfMonth: data.dayOfMonth,
+        timezoneOffsetMinutes: data.timezoneOffsetMinutes,
+      }
+      if (data.recurrence === 'ONCE' && data.scheduledAt) {
+        payload.scheduledAt = data.scheduledAt
+      }
+      await schedulesApi.update(accessToken, editing.id, payload)
       setEditing(null)
       setSuccess('Schedule updated.')
       await loadData()
@@ -195,8 +205,8 @@ export function Schedules() {
           <CardHeader className="mb-0 border-b border-border p-5">
             <CardTitle>Scheduled reports</CardTitle>
             <p className="mt-1 text-sm text-text-secondary">
-              Emails are sent to all active members of the selected group when the due time is
-              reached. PDF and CSV attachments are planned for a future release.
+              Send report links by email on a one-time or recurring basis (daily, weekly, or
+              monthly). PDF and CSV attachments are planned for a future release.
             </p>
           </CardHeader>
           {loading ? (
@@ -204,7 +214,7 @@ export function Schedules() {
           ) : sortedSchedules.length === 0 ? (
             <div className="p-8 text-center text-sm text-text-secondary">
               No schedules yet.
-              {canSchedule && ' Create one to notify a group when a report is due.'}
+              {canSchedule && ' Create one to email a group when a report is due.'}
             </div>
           ) : (
             <DataTable
@@ -224,7 +234,18 @@ export function Schedules() {
                           Partial delivery: {r.lastError}
                         </div>
                       )}
+                      {r.lastError && r.status === 'ACTIVE' && r.recurrence !== 'ONCE' && (
+                        <div className="mt-0.5 text-xs text-text-secondary">
+                          Last run warning: {r.lastError}
+                        </div>
+                      )}
                     </div>
+                  ),
+                },
+                {
+                  header: 'Frequency',
+                  accessor: (r) => (
+                    <span className="text-sm text-text-primary">{r.recurrenceLabel}</span>
                   ),
                 },
                 {
@@ -239,10 +260,12 @@ export function Schedules() {
                   ),
                 },
                 {
-                  header: 'Due',
+                  header: 'Next run',
                   accessor: (r) => (
                     <span className="text-xs text-text-secondary">
-                      {formatScheduleDate(r.scheduledAt)}
+                      {r.status === 'COMPLETED' && r.recurrence === 'ONCE'
+                        ? '—'
+                        : formatScheduleDate(r.scheduledAt)}
                     </span>
                   ),
                 },
@@ -266,36 +289,40 @@ export function Schedules() {
                   header: 'Actions',
                   accessor: (r) => (
                     <div className="flex gap-2 text-text-secondary">
-                      {canEdit && (r.status === 'ACTIVE' || r.status === 'PAUSED') && (
-                        <>
-                          <button
-                            type="button"
-                            className="rounded-sm px-1.5 py-1 hover:text-brand-blue"
-                            title="Edit due time"
-                            disabled={actionLoading}
-                            onClick={() => {
-                              setSuccess('')
-                              setEditing(r)
-                            }}
-                          >
-                            <i className="ti ti-pencil"></i>
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-sm px-1.5 py-1 hover:text-brand-blue"
-                            title={r.status === 'PAUSED' ? 'Resume' : 'Pause'}
-                            disabled={actionLoading}
-                            onClick={() => void togglePause(r)}
-                          >
-                            <i
-                              className={
-                                r.status === 'PAUSED' ? 'ti ti-player-play' : 'ti ti-player-pause'
-                              }
-                            ></i>
-                          </button>
-                        </>
-                      )}
-                      {canDelete && r.status !== 'COMPLETED' && (
+                      {canEdit &&
+                        (r.status === 'ACTIVE' || r.status === 'PAUSED') &&
+                        !isOneTimeCompleted(r) && (
+                          <>
+                            <button
+                              type="button"
+                              className="rounded-sm px-1.5 py-1 hover:text-brand-blue"
+                              title="Edit schedule"
+                              disabled={actionLoading}
+                              onClick={() => {
+                                setSuccess('')
+                                setEditing(r)
+                              }}
+                            >
+                              <i className="ti ti-pencil"></i>
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-sm px-1.5 py-1 hover:text-brand-blue"
+                              title={r.status === 'PAUSED' ? 'Resume' : 'Pause'}
+                              disabled={actionLoading}
+                              onClick={() => void togglePause(r)}
+                            >
+                              <i
+                                className={
+                                  r.status === 'PAUSED'
+                                    ? 'ti ti-player-play'
+                                    : 'ti ti-player-pause'
+                                }
+                              ></i>
+                            </button>
+                          </>
+                        )}
+                      {canDelete && !isOneTimeCompleted(r) && (
                         <button
                           type="button"
                           className="rounded-sm px-1.5 py-1 hover:text-semantic-red"
@@ -332,9 +359,7 @@ export function Schedules() {
         groups={groups}
         loading={actionLoading}
         lockReportAndGroup
-        initialReportId={editing?.reportId}
-        initialGroupId={editing?.groupId}
-        initialScheduledAt={editing?.scheduledAt}
+        initial={editing}
         onConfirm={handleUpdate}
         onCancel={() => setEditing(null)}
       />
@@ -344,7 +369,7 @@ export function Schedules() {
         title="Delete schedule"
         message={
           deleteTarget
-            ? `Remove the schedule for "${deleteTarget.reportName}" to ${deleteTarget.groupName}?`
+            ? `Remove the schedule for "${deleteTarget.reportName}" (${deleteTarget.recurrenceLabel}) to ${deleteTarget.groupName}?`
             : ''
         }
         confirmLabel="Delete"

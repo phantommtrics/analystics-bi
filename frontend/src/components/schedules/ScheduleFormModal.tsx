@@ -1,5 +1,20 @@
 import { useEffect, useState } from 'react'
-import type { ScheduleGroupOption, SchedulableReportOption } from '../../api/schedules'
+import type {
+  CreateSchedulePayload,
+  ReportScheduleSummary,
+  ScheduleGroupOption,
+  SchedulableReportOption,
+} from '../../api/schedules'
+import {
+  RECURRENCE_OPTIONS,
+  WEEKDAY_OPTIONS,
+  clientTimezoneOffsetMinutes,
+  datetimeLocalToIso,
+  defaultTimeValue,
+  parseTimeInput,
+  toDatetimeLocalValue,
+  type ReportScheduleRecurrence,
+} from '../../lib/scheduleRecurrence'
 import { LoadingButton } from '../ui/LoadingButton'
 
 interface ScheduleFormModalProps {
@@ -8,33 +23,10 @@ interface ScheduleFormModalProps {
   reports: SchedulableReportOption[]
   groups: ScheduleGroupOption[]
   loading?: boolean
-  initialReportId?: string
-  initialGroupId?: string
-  initialScheduledAt?: string
-  /** When true, report and group cannot be changed (edit due time only). */
+  initial?: ReportScheduleSummary | null
   lockReportAndGroup?: boolean
-  onConfirm: (data: {
-    reportId: string
-    groupId: string
-    scheduledAt: string
-  }) => void
+  onConfirm: (data: CreateSchedulePayload) => void
   onCancel: () => void
-}
-
-function toDatetimeLocalValue(iso?: string): string {
-  if (!iso) {
-    const d = new Date()
-    d.setMinutes(d.getMinutes() + 60 - (d.getMinutes() % 15), 0, 0)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  }
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function datetimeLocalToIso(value: string): string {
-  return new Date(value).toISOString()
 }
 
 export function ScheduleFormModal({
@@ -43,34 +35,80 @@ export function ScheduleFormModal({
   reports,
   groups,
   loading = false,
-  initialReportId = '',
-  initialGroupId = '',
-  initialScheduledAt,
+  initial = null,
   lockReportAndGroup = false,
   onConfirm,
   onCancel,
 }: ScheduleFormModalProps) {
-  const [reportId, setReportId] = useState(initialReportId)
-  const [groupId, setGroupId] = useState(initialGroupId)
-  const [scheduledAtLocal, setScheduledAtLocal] = useState(() =>
-    toDatetimeLocalValue(initialScheduledAt),
+  const [reportId, setReportId] = useState(initial?.reportId ?? '')
+  const [groupId, setGroupId] = useState(initial?.groupId ?? '')
+  const [recurrence, setRecurrence] = useState<ReportScheduleRecurrence>(
+    initial?.recurrence ?? 'ONCE',
   )
+  const [scheduledAtLocal, setScheduledAtLocal] = useState(() =>
+    toDatetimeLocalValue(initial?.scheduledAt),
+  )
+  const [timeLocal, setTimeLocal] = useState(() =>
+    initial?.timeMinutes != null
+      ? `${String(Math.floor(initial.timeMinutes / 60)).padStart(2, '0')}:${String(initial.timeMinutes % 60).padStart(2, '0')}`
+      : defaultTimeValue(),
+  )
+  const [dayOfWeek, setDayOfWeek] = useState(initial?.dayOfWeek ?? 1)
+  const [dayOfMonth, setDayOfMonth] = useState(initial?.dayOfMonth ?? 1)
 
   useEffect(() => {
     if (!open) return
-    setReportId(initialReportId)
-    setGroupId(initialGroupId)
-    setScheduledAtLocal(toDatetimeLocalValue(initialScheduledAt))
-  }, [open, initialReportId, initialGroupId, initialScheduledAt])
+    setReportId(initial?.reportId ?? '')
+    setGroupId(initial?.groupId ?? '')
+    setRecurrence(initial?.recurrence ?? 'ONCE')
+    setScheduledAtLocal(toDatetimeLocalValue(initial?.scheduledAt))
+    setTimeLocal(
+      initial?.timeMinutes != null
+        ? `${String(Math.floor(initial.timeMinutes / 60)).padStart(2, '0')}:${String(initial.timeMinutes % 60).padStart(2, '0')}`
+        : initial?.scheduledAt
+          ? `${String(new Date(initial.scheduledAt).getHours()).padStart(2, '0')}:${String(new Date(initial.scheduledAt).getMinutes()).padStart(2, '0')}`
+          : defaultTimeValue(),
+    )
+    setDayOfWeek(initial?.dayOfWeek ?? 1)
+    setDayOfMonth(initial?.dayOfMonth ?? 1)
+  }, [open, initial])
 
   if (!open) return null
 
   const selectedGroup = groups.find((g) => g.id === groupId)
+  const isOnce = recurrence === 'ONCE'
+
   const canSubmit =
     reportId.length > 0 &&
     groupId.length > 0 &&
-    scheduledAtLocal.length > 0 &&
-    (selectedGroup?.memberCount ?? 0) > 0
+    (selectedGroup?.memberCount ?? 0) > 0 &&
+    (isOnce ? scheduledAtLocal.length > 0 : timeLocal.length > 0)
+
+  function buildPayload(): CreateSchedulePayload {
+    const timezoneOffsetMinutes = clientTimezoneOffsetMinutes()
+    const base = {
+      reportId,
+      groupId,
+      recurrence,
+      timezoneOffsetMinutes,
+    }
+
+    if (isOnce) {
+      return {
+        ...base,
+        scheduledAt: datetimeLocalToIso(scheduledAtLocal),
+      }
+    }
+
+    const timeMinutes = parseTimeInput(timeLocal)
+    if (recurrence === 'DAILY') {
+      return { ...base, timeMinutes }
+    }
+    if (recurrence === 'WEEKLY') {
+      return { ...base, timeMinutes, dayOfWeek }
+    }
+    return { ...base, timeMinutes, dayOfMonth }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -83,12 +121,12 @@ export function ScheduleFormModal({
       <div
         role="dialog"
         aria-modal="true"
-        className="relative z-10 w-full max-w-lg rounded-lg border border-border bg-bg-primary p-6 shadow-xl"
+        className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-bg-primary p-6 shadow-xl"
       >
         <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
         <p className="mt-1 text-sm text-text-secondary">
-          At the scheduled time, every active member of the selected group receives an email with
-          a link to open the report. File attachments will be added in a later release.
+          Recipients receive an email with a link to open the report. Times use your browser&apos;s
+          local timezone. PDF and CSV attachments are planned for a later release.
         </p>
 
         <div className="mt-5 space-y-4">
@@ -107,11 +145,6 @@ export function ScheduleFormModal({
                 </option>
               ))}
             </select>
-            {reports.length === 0 && (
-              <p className="mt-1.5 text-xs text-semantic-amber">
-                No published reports available. Publish a report from Report Builder first.
-              </p>
-            )}
           </div>
 
           <div>
@@ -129,22 +162,103 @@ export function ScheduleFormModal({
                 </option>
               ))}
             </select>
-            {selectedGroup && selectedGroup.memberCount === 0 && (
-              <p className="mt-1.5 text-xs text-semantic-red">
-                This group has no members. Add operators to the group before scheduling.
-              </p>
-            )}
           </div>
 
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Send on (your local time)</label>
-            <input
-              type="datetime-local"
-              value={scheduledAtLocal}
-              onChange={(e) => setScheduledAtLocal(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
-            />
+            <label className="mb-1.5 block text-sm font-medium">Frequency</label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {RECURRENCE_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex cursor-pointer flex-col rounded-md border px-3 py-2.5 text-sm transition-colors ${
+                    recurrence === opt.value
+                      ? 'border-brand-blue bg-brand-blue/5'
+                      : 'border-border hover:border-brand-blue/40'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 font-medium text-text-primary">
+                    <input
+                      type="radio"
+                      name="recurrence"
+                      value={opt.value}
+                      checked={recurrence === opt.value}
+                      onChange={() => setRecurrence(opt.value)}
+                      className="accent-brand-blue"
+                    />
+                    {opt.label}
+                  </span>
+                  <span className="mt-1 pl-6 text-xs text-text-secondary">{opt.description}</span>
+                </label>
+              ))}
+            </div>
           </div>
+
+          {isOnce ? (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Send on</label>
+              <input
+                type="datetime-local"
+                value={scheduledAtLocal}
+                onChange={(e) => setScheduledAtLocal(e.target.value)}
+                className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+              />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Time of day</label>
+                <input
+                  type="time"
+                  value={timeLocal}
+                  onChange={(e) => setTimeLocal(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+                />
+              </div>
+
+              {recurrence === 'WEEKLY' && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Day of week</label>
+                  <select
+                    value={dayOfWeek}
+                    onChange={(e) => setDayOfWeek(Number(e.target.value))}
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+                  >
+                    {WEEKDAY_OPTIONS.map((d) => (
+                      <option key={d.value} value={d.value}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {recurrence === 'MONTHLY' && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Day of month</label>
+                  <select
+                    value={dayOfMonth}
+                    onChange={(e) => setDayOfMonth(Number(e.target.value))}
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+                  >
+                    {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        Day {d}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-xs text-text-secondary">
+                    For months with fewer days (e.g. February), the last day of that month is used.
+                  </p>
+                </div>
+              )}
+
+              {!lockReportAndGroup && (
+                <p className="rounded-md border border-border bg-bg-secondary px-3 py-2 text-xs text-text-secondary">
+                  The first email goes out at the next matching date and time after you save.
+                </p>
+              )}
+            </>
+          )}
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
@@ -154,13 +268,7 @@ export function ScheduleFormModal({
           <LoadingButton
             loading={loading}
             disabled={!canSubmit}
-            onClick={() =>
-              onConfirm({
-                reportId,
-                groupId,
-                scheduledAt: datetimeLocalToIso(scheduledAtLocal),
-              })
-            }
+            onClick={() => onConfirm(buildPayload())}
           >
             Save schedule
           </LoadingButton>

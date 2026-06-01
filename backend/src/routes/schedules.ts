@@ -1,4 +1,4 @@
-import { ReportScheduleStatus } from '@prisma/client'
+import { ReportScheduleRecurrence, ReportScheduleStatus } from '@prisma/client'
 import { Router } from 'express'
 import { z } from 'zod'
 import { authenticate } from '../middleware/authenticate.js'
@@ -18,15 +18,64 @@ export const schedulesRouter = Router()
 
 schedulesRouter.use(authenticate)
 
-const createScheduleSchema = z.object({
-  reportId: z.string().min(1),
-  groupId: z.string().min(1),
-  scheduledAt: z.string().datetime(),
-})
+const recurrenceEnum = z.nativeEnum(ReportScheduleRecurrence)
+
+const createScheduleSchema = z
+  .object({
+    reportId: z.string().min(1),
+    groupId: z.string().min(1),
+    recurrence: recurrenceEnum.default(ReportScheduleRecurrence.ONCE),
+    scheduledAt: z.string().datetime().optional(),
+    timeMinutes: z.number().int().min(0).max(1439).optional(),
+    dayOfWeek: z.number().int().min(1).max(7).optional(),
+    dayOfMonth: z.number().int().min(1).max(31).optional(),
+    timezoneOffsetMinutes: z.number().int().min(-840).max(840).default(0),
+  })
+  .superRefine((data, ctx) => {
+    if (data.recurrence === ReportScheduleRecurrence.ONCE && !data.scheduledAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'scheduledAt is required for one-time schedules',
+        path: ['scheduledAt'],
+      })
+    }
+    if (data.recurrence !== ReportScheduleRecurrence.ONCE && data.timeMinutes == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'timeMinutes is required for recurring schedules',
+        path: ['timeMinutes'],
+      })
+    }
+    if (
+      data.recurrence === ReportScheduleRecurrence.WEEKLY &&
+      data.dayOfWeek == null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'dayOfWeek is required for weekly schedules',
+        path: ['dayOfWeek'],
+      })
+    }
+    if (
+      data.recurrence === ReportScheduleRecurrence.MONTHLY &&
+      data.dayOfMonth == null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'dayOfMonth is required for monthly schedules',
+        path: ['dayOfMonth'],
+      })
+    }
+  })
 
 const updateScheduleSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
   status: z.nativeEnum(ReportScheduleStatus).optional(),
+  recurrence: recurrenceEnum.optional(),
+  timeMinutes: z.number().int().min(0).max(1439).optional(),
+  dayOfWeek: z.number().int().min(1).max(7).optional().nullable(),
+  dayOfMonth: z.number().int().min(1).max(31).optional().nullable(),
+  timezoneOffsetMinutes: z.number().int().min(-840).max(840).optional(),
 })
 
 function mapScheduleError(error: unknown, res: import('express').Response) {
@@ -47,13 +96,26 @@ function mapScheduleError(error: unknown, res: import('express').Response) {
       res.status(400).json({ message: 'Recipient group has no members' })
       return true
     case 'SCHEDULE_IN_PAST':
+    case 'SCHEDULE_REQUIRED':
       res.status(400).json({ message: 'Scheduled time must be in the future' })
+      return true
+    case 'INVALID_TIME':
+      res.status(400).json({ message: 'Invalid time of day' })
+      return true
+    case 'INVALID_DAY_OF_WEEK':
+      res.status(400).json({ message: 'Invalid day of week (use 1=Monday … 7=Sunday)' })
+      return true
+    case 'INVALID_DAY_OF_MONTH':
+      res.status(400).json({ message: 'Invalid day of month (1–31)' })
       return true
     case 'ALREADY_COMPLETED':
       res.status(400).json({ message: 'Completed schedules cannot be changed' })
       return true
     case 'CANNOT_RESCHEDULE':
       res.status(400).json({ message: 'Only active schedules can be rescheduled' })
+      return true
+    case 'CANNOT_EDIT_FAILED':
+      res.status(400).json({ message: 'Failed schedules cannot be edited' })
       return true
     default:
       return false
@@ -86,14 +148,21 @@ schedulesRouter.get('/:id', authorize('schedules', 'view'), async (req, res) => 
 schedulesRouter.post('/', authorize('schedules', 'schedule'), async (req, res) => {
   const parsed = createScheduleSchema.safeParse(req.body)
   if (!parsed.success) {
-    return res.status(400).json({ message: 'Invalid payload' })
+    return res.status(400).json({ message: 'Invalid payload', issues: parsed.error.flatten() })
   }
 
   try {
     const schedule = await createReportSchedule({
       reportId: parsed.data.reportId,
       groupId: parsed.data.groupId,
-      scheduledAt: new Date(parsed.data.scheduledAt),
+      recurrence: parsed.data.recurrence,
+      scheduledAt: parsed.data.scheduledAt
+        ? new Date(parsed.data.scheduledAt)
+        : undefined,
+      timeMinutes: parsed.data.timeMinutes,
+      dayOfWeek: parsed.data.dayOfWeek,
+      dayOfMonth: parsed.data.dayOfMonth,
+      timezoneOffsetMinutes: parsed.data.timezoneOffsetMinutes,
       createdById: req.authUser?.id,
     })
     return res.status(201).json(schedule)
@@ -119,6 +188,11 @@ schedulesRouter.patch('/:id', authorize('schedules', 'edit'), async (req, res) =
         ? new Date(parsed.data.scheduledAt)
         : undefined,
       status: parsed.data.status,
+      recurrence: parsed.data.recurrence,
+      timeMinutes: parsed.data.timeMinutes,
+      dayOfWeek: parsed.data.dayOfWeek,
+      dayOfMonth: parsed.data.dayOfMonth,
+      timezoneOffsetMinutes: parsed.data.timezoneOffsetMinutes,
     })
     return res.json(schedule)
   } catch (error) {

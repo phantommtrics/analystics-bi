@@ -1,3 +1,5 @@
+import type { ReportScheduleRecurrence } from '../lib/scheduleRecurrence'
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
 
 async function schedulesFetch<T>(
@@ -32,7 +34,13 @@ export interface ReportScheduleSummary {
   groupId: string
   groupName: string
   recipientCount: number
+  recurrence: ReportScheduleRecurrence
+  recurrenceLabel: string
   scheduledAt: string
+  timeMinutes: number | null
+  dayOfWeek: number | null
+  dayOfMonth: number | null
+  timezoneOffsetMinutes: number
   status: ReportScheduleStatus
   lastSentAt: string | null
   lastError: string | null
@@ -55,6 +63,27 @@ export interface ScheduleGroupOption {
   memberCount: number
 }
 
+export interface CreateSchedulePayload {
+  reportId: string
+  groupId: string
+  recurrence: ReportScheduleRecurrence
+  scheduledAt?: string
+  timeMinutes?: number
+  dayOfWeek?: number
+  dayOfMonth?: number
+  timezoneOffsetMinutes: number
+}
+
+export interface UpdateSchedulePayload {
+  scheduledAt?: string
+  status?: 'ACTIVE' | 'PAUSED'
+  recurrence?: ReportScheduleRecurrence
+  timeMinutes?: number
+  dayOfWeek?: number | null
+  dayOfMonth?: number | null
+  timezoneOffsetMinutes?: number
+}
+
 export const schedulesApi = {
   list: (token: string) =>
     schedulesFetch<ReportScheduleSummary[]>('/', token),
@@ -65,20 +94,13 @@ export const schedulesApi = {
   listGroups: (token: string) =>
     schedulesFetch<ScheduleGroupOption[]>('/groups', token),
 
-  create: (
-    token: string,
-    data: { reportId: string; groupId: string; scheduledAt: string },
-  ) =>
+  create: (token: string, data: CreateSchedulePayload) =>
     schedulesFetch<ReportScheduleSummary>('/', token, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  update: (
-    token: string,
-    id: string,
-    data: { scheduledAt?: string; status?: 'ACTIVE' | 'PAUSED' },
-  ) =>
+  update: (token: string, id: string, data: UpdateSchedulePayload) =>
     schedulesFetch<ReportScheduleSummary>(`/${id}`, token, {
       method: 'PATCH',
       body: JSON.stringify(data),

@@ -7,6 +7,7 @@ export const MODULES = [
   'report-builder',
   'agents',
   'balance',
+  'reconciliation',
   'customers',
   'banks',
   'remittance',
@@ -42,7 +43,10 @@ export type ActionKey = (typeof ACTIONS)[number]
 const SYSTEM_CONFIG_ACTIONS: readonly ActionKey[] = ['view', 'edit', 'delete']
 
 /** Actions available per module in the roles permission matrix. */
+const SCHEDULES_ACTIONS: readonly ActionKey[] = ['view', 'schedule', 'edit', 'delete']
+
 const MODULE_ACTION_OVERRIDES: Partial<Record<ModuleKey, readonly ActionKey[]>> = {
+  schedules: SCHEDULES_ACTIONS,
   'system-config-roles': SYSTEM_CONFIG_ACTIONS,
   'system-config-groups': SYSTEM_CONFIG_ACTIONS,
   'system-config-operators': SYSTEM_CONFIG_ACTIONS,

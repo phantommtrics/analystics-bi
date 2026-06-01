@@ -4,6 +4,7 @@ import { DashboardDateFilter } from '../components/dashboard/DashboardDateFilter
 import { TopBar } from '../components/layout/TopBar'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { DashboardBuilderPanel } from '../components/dashboard/DashboardBuilderPanel'
+import { DashboardSaveModal } from '../components/dashboard/DashboardSaveModal'
 import { DashboardGrid } from '../components/dashboard/DashboardGrid'
 import { DashboardTabBar } from '../components/dashboard/DashboardTabBar'
 import { dashboardsApi, type DashboardDetail, type DashboardSummary } from '../api/dashboards'
@@ -17,7 +18,11 @@ import {
   isDashboardTabDirty,
   type DashboardTab,
 } from '../lib/dashboardTabs'
-import { formatReportDate } from '../lib/reportConstants'
+import {
+  formatReportDate,
+  isSidebarReportCategory,
+  type SidebarReportCategory,
+} from '../lib/reportConstants'
 import { useDashboardFilters } from '../hooks/useDashboardFilters'
 import { filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
 
@@ -48,8 +53,6 @@ export function DashboardBuilder() {
   const [pendingDelete, setPendingDelete] = useState<DashboardSummary | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [showSaveModal, setShowSaveModal] = useState(false)
-  const [saveNameInput, setSaveNameInput] = useState('')
-  const [saveDescInput, setSaveDescInput] = useState('')
   const [publishLoading, setPublishLoading] = useState(false)
   const [pendingPublish, setPendingPublish] = useState(false)
   const [pendingUnpublish, setPendingUnpublish] = useState(false)
@@ -207,40 +210,43 @@ export function DashboardBuilder() {
     )
   }
 
-  function openSaveModal() {
-    setSaveNameInput(activeTab.name === 'Untitled dashboard' ? '' : activeTab.name)
-    setSaveDescInput(activeTab.description)
-    setShowSaveModal(true)
-  }
-
-  async function handleSave() {
-    if (!accessToken || !saveNameInput.trim()) return
+  async function handleSaveConfirm(data: {
+    name: string
+    description: string
+    showInSidebarMenu: boolean
+    sidebarCategory: SidebarReportCategory | null
+  }) {
+    if (!accessToken) return
     setIsSaving(true)
     setBannerError('')
     try {
-      const description = saveDescInput.trim()
+      const payload = {
+        name: data.name,
+        description: data.description || null,
+        layout: activeTab.layout,
+        showInSidebarMenu: data.showInSidebarMenu,
+        sidebarCategory: data.sidebarCategory,
+      }
       let saved: DashboardDetail
 
       if (activeTab.savedDashboardId) {
-        saved = await dashboardsApi.update(accessToken, activeTab.savedDashboardId, {
-          name: saveNameInput.trim(),
-          description: description || null,
-          layout: activeTab.layout,
-        })
+        saved = await dashboardsApi.update(accessToken, activeTab.savedDashboardId, payload)
         setBannerSuccess(`Dashboard "${saved.name}" saved`)
       } else {
-        saved = await dashboardsApi.create(accessToken, {
-          name: saveNameInput.trim(),
-          description: description || null,
-          layout: activeTab.layout,
-        })
+        saved = await dashboardsApi.create(accessToken, payload)
         setBannerSuccess(`Dashboard "${saved.name}" created`)
       }
 
+      const sidebarCategory =
+        saved.sidebarCategory && isSidebarReportCategory(saved.sidebarCategory)
+          ? saved.sidebarCategory
+          : null
       const snapshot = {
         name: saved.name,
         description: saved.description ?? '',
         layout: saved.layout,
+        showInSidebarMenu: saved.showInSidebarMenu,
+        sidebarCategory,
       }
 
       setTabs((prev) =>
@@ -253,6 +259,8 @@ export function DashboardBuilder() {
                 name: saved.name,
                 description: saved.description ?? '',
                 layout: saved.layout,
+                showInSidebarMenu: saved.showInSidebarMenu,
+                sidebarCategory,
                 isPublished: saved.isPublished,
                 savedSnapshot: snapshot,
               }
@@ -358,7 +366,7 @@ export function DashboardBuilder() {
           canEdit
             ? {
                 label: activeTab.savedDashboardId ? 'Save layout' : 'Save dashboard',
-                onClick: openSaveModal,
+                onClick: () => setShowSaveModal(true),
                 icon: 'ti-device-floppy',
               }
             : undefined
@@ -531,64 +539,22 @@ export function DashboardBuilder() {
         </div>
       )}
 
-      {showSaveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            aria-label="Close"
-            onClick={() => !isSaving && setShowSaveModal(false)}
-          />
-          <div className="relative z-10 w-full max-w-md rounded-lg border border-border bg-bg-primary p-6 shadow-xl">
-            <h2 className="text-lg font-semibold">
-              {activeTab.savedDashboardId ? 'Save dashboard layout' : 'Save new dashboard'}
-            </h2>
-            <div className="mt-4 space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium">Name</label>
-                <input
-                  value={saveNameInput}
-                  onChange={(e) => setSaveNameInput(e.target.value)}
-                  className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-brand-blue"
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Description (optional)</label>
-                <textarea
-                  value={saveDescInput}
-                  onChange={(e) => setSaveDescInput(e.target.value)}
-                  rows={2}
-                  className="w-full rounded-md border border-border px-3 py-2 text-sm outline-none focus:border-brand-blue"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-md border border-border px-4 py-2 text-sm"
-                disabled={isSaving}
-                onClick={() => setShowSaveModal(false)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSaving || !saveNameInput.trim()}
-                className="rounded-md bg-brand-blue px-4 py-2 text-sm text-white disabled:opacity-50"
-                onClick={handleSave}
-              >
-                {isSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DashboardSaveModal
+        open={showSaveModal}
+        title={activeTab.savedDashboardId ? 'Save dashboard layout' : 'Save new dashboard'}
+        initialName={activeTab.name === 'Untitled dashboard' ? '' : activeTab.name}
+        initialDescription={activeTab.description}
+        initialShowInSidebarMenu={activeTab.showInSidebarMenu}
+        initialSidebarCategory={activeTab.sidebarCategory}
+        loading={isSaving}
+        onConfirm={handleSaveConfirm}
+        onCancel={() => setShowSaveModal(false)}
+      />
 
       <ConfirmModal
         open={pendingPublish}
         title="Publish dashboard?"
-        message={`Publish "${activeTab.name}"? It will appear in the Roles permission matrix and can be assigned to users for the dashboard menu.`}
+        message={`Publish "${activeTab.name}"? Per-dashboard view permissions will appear in Roles${activeTab.showInSidebarMenu ? ' under the matching sidebar section (e.g. Agents)' : ' under Dashboard'}. Users need Dashboard view and this dashboard's view to open it.`}
         confirmLabel="Publish"
         loading={publishLoading}
         onConfirm={confirmPublish}

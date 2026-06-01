@@ -6,10 +6,17 @@ import { authorize, authorizeAny } from '../../middleware/authorize.js'
 import { ACTIONS, MODULES, getModuleActionsMap } from '../../auth/permissions.js'
 import {
   CUSTOM_DASHBOARD_ACTIONS,
-  buildPermissionModuleList,
+  buildDashboardPermissionModuleList,
   ensureAllDashboardPermissions,
-  listCustomDashboardModuleKeys,
+  insertModulesAfter,
+  listMainMenuDashboardModuleKeys,
+  listSidebarDashboardModulesBySection,
 } from '../../dashboards/permissions.js'
+import {
+  CUSTOM_REPORT_ACTIONS,
+  ensureAllReportPermissions,
+  listCatalogReportModuleKeys,
+} from '../../reports/permissions.js'
 import { paramId } from '../../utils/params.js'
 
 export const rolesRouter = Router()
@@ -31,26 +38,51 @@ const setPermissionsSchema = z.object({
 })
 
 rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (_req, res) => {
-  await ensureAllDashboardPermissions()
-  const [permissions, customDashboardModules] = await Promise.all([
+  await Promise.all([ensureAllDashboardPermissions(), ensureAllReportPermissions()])
+  const [
+    permissions,
+    mainMenuDashboardModules,
+    sidebarDashboardBySection,
+    catalogReportModules,
+  ] = await Promise.all([
     prisma.permission.findMany({
       orderBy: [{ moduleKey: 'asc' }, { actionKey: 'asc' }],
     }),
-    listCustomDashboardModuleKeys(),
+    listMainMenuDashboardModuleKeys(),
+    listSidebarDashboardModulesBySection(),
+    listCatalogReportModuleKeys(),
   ])
+
+  const allCustomDashboardModules = [
+    ...mainMenuDashboardModules,
+    ...Object.values(sidebarDashboardBySection).flat(),
+  ]
 
   const moduleActions = {
     ...getModuleActionsMap(),
     ...Object.fromEntries(
-      customDashboardModules.map((moduleKey) => [
+      allCustomDashboardModules.map((moduleKey) => [
         moduleKey,
         [...CUSTOM_DASHBOARD_ACTIONS],
       ]),
     ),
+    ...Object.fromEntries(
+      catalogReportModules.map((moduleKey) => [moduleKey, [...CUSTOM_REPORT_ACTIONS]]),
+    ),
   }
 
+  const modules = insertModulesAfter(
+    buildDashboardPermissionModuleList(
+      MODULES,
+      mainMenuDashboardModules,
+      sidebarDashboardBySection,
+    ),
+    'reports',
+    catalogReportModules,
+  )
+
   return res.json({
-    modules: buildPermissionModuleList(MODULES, customDashboardModules),
+    modules,
     actions: ACTIONS,
     moduleActions,
     permissions,

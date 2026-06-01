@@ -101,19 +101,30 @@ export function ReportBuilderSidebar({
                       <span className="line-clamp-2 text-sm font-medium text-text-primary">
                         {report.name}
                       </span>
-                      {canDelete && (
-                        <button
-                          type="button"
-                          title="Delete report"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDelete(report)
-                          }}
-                          className="shrink-0 rounded p-1 text-text-secondary opacity-0 transition-opacity hover:bg-semantic-red/10 hover:text-semantic-red group-hover:opacity-100"
-                        >
-                          <i className="ti ti-trash text-sm"></i>
-                        </button>
-                      )}
+                      <div className="flex shrink-0 items-center gap-1">
+                        {report.isPublished ? (
+                          <span className="rounded-full bg-brand-blue/15 px-1.5 py-0.5 text-[9px] font-medium uppercase text-brand-blue">
+                            Live
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-bg-secondary px-1.5 py-0.5 text-[9px] font-medium uppercase text-text-secondary">
+                            Draft
+                          </span>
+                        )}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            title="Delete report"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDelete(report)
+                            }}
+                            className="shrink-0 rounded p-1 text-text-secondary opacity-0 transition-opacity hover:bg-semantic-red/10 hover:text-semantic-red group-hover:opacity-100"
+                          >
+                            <i className="ti ti-trash text-sm"></i>
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                       <Badge variant={meta.badgeVariant}>{meta.label}</Badge>

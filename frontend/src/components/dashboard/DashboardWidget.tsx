@@ -10,8 +10,9 @@ import {
 import { rowsToChartData, rowsToPieData } from '../../lib/queryResultChart'
 import { serializeQueryFilters } from '../../lib/dashboardFilters'
 import { ReportChartPreview } from '../report/ReportChartPreview'
-import { DataTable } from '../ui/DataTable'
-import type { Column } from '../ui/DataTable'
+import { ChartPreviewSkeleton } from '../report/ChartPreviewSkeleton'
+import { QueryResultsTable } from '../report/QueryResultsTable'
+import { COMPACT_QUERY_TABLE_PAGE_SIZE } from '../../lib/queryResultTable'
 
 interface DashboardWidgetProps {
   accessToken: string
@@ -19,6 +20,7 @@ interface DashboardWidgetProps {
   visualization: ReportVisualization
   canEdit: boolean
   queryFilters?: Record<string, string>
+  dashboardId?: string
   onVisualizationChange?: (v: ReportVisualization) => void
   onRemove: () => void
   /** Mousedown on grip starts canvas reposition drag */
@@ -32,6 +34,7 @@ export function DashboardWidget({
   visualization,
   canEdit,
   queryFilters,
+  dashboardId,
   onVisualizationChange,
   onRemove,
   onDragHandleMouseDown,
@@ -41,14 +44,21 @@ export function DashboardWidget({
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<QueryExecuteResult | null>(null)
 
-  const filterKey = queryFilters ? serializeQueryFilters(queryFilters) : ''
+  const filterKey = serializeQueryFilters(queryFilters)
 
   useEffect(() => {
+    if (queryFilters === undefined) {
+      setLoading(false)
+      setError(null)
+      setResult(null)
+      return
+    }
+
     let cancelled = false
     setLoading(true)
     setError(null)
     reportsApi
-      .execute(accessToken, report.id, queryFilters)
+      .execute(accessToken, report.id, queryFilters, { dashboardId })
       .then((data) => {
         if (!cancelled) setResult(data)
       })
@@ -63,7 +73,7 @@ export function DashboardWidget({
     return () => {
       cancelled = true
     }
-  }, [accessToken, report.id, filterKey])
+  }, [accessToken, report.id, filterKey, dashboardId])
 
   const chartData = useMemo(() => {
     if (!result?.rows.length) return { labels: [], series: [] }
@@ -76,19 +86,12 @@ export function DashboardWidget({
   }, [result])
 
   const meta = categoryMeta[report.category]
-  const showChart = visualization !== 'TABLE_ONLY' && chartData.series.length > 0
-  const previewRows = result?.rows.slice(0, 8) ?? []
-
-  const tableColumns: Column<Record<string, unknown>>[] = useMemo(() => {
-    if (!result) return []
-    return result.columns.map((col) => ({
-      header: col,
-      accessor: (row: Record<string, unknown>) => {
-        const v = row[col]
-        return v === null || v === undefined ? '—' : String(v)
-      },
-    }))
-  }, [result])
+  const showChart =
+    !loading && visualization !== 'TABLE_ONLY' && chartData.series.length > 0
+  const showChartSkeleton = loading && visualization !== 'TABLE_ONLY'
+  const showTable =
+    queryFilters !== undefined &&
+    (loading || (result !== null && result.rows.length > 0))
 
   return (
     <div
@@ -141,36 +144,46 @@ export function DashboardWidget({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        {loading && (
-          <div className="flex h-full min-h-[80px] items-center justify-center text-xs text-text-secondary">
-            Loading...
+        {queryFilters === undefined && (
+          <div className="flex h-full min-h-[80px] flex-col items-center justify-center gap-1 px-2 text-center text-xs text-text-secondary">
+            <i className="ti ti-filter-off text-lg opacity-60"></i>
+            <p>Select a date filter to load data</p>
           </div>
         )}
-        {error && (
+        {queryFilters !== undefined && error && (
           <div className="flex h-full min-h-[80px] items-center justify-center px-2 text-center text-xs text-semantic-red">
             {error}
           </div>
         )}
-        {!loading && !error && result && (
+        {queryFilters !== undefined && !error && (
           <>
-            {showChart && (
-              <ReportChartPreview
-                visualization={visualization}
-                chartData={chartData}
-                pieData={pieData}
-                height="100%"
+            {showChartSkeleton && (
+              <div className="mb-2">
+                <ChartPreviewSkeleton height={120} />
+              </div>
+            )}
+            {showChart && result && (
+              <div className="mb-2">
+                <ReportChartPreview
+                  visualization={visualization}
+                  chartData={chartData}
+                  pieData={pieData}
+                  height={120}
+                />
+              </div>
+            )}
+            {showTable && (
+              <QueryResultsTable
+                queryResult={result}
+                loading={loading}
+                skeletonColumns={result?.columns}
+                defaultPageSize={COMPACT_QUERY_TABLE_PAGE_SIZE}
+                skeletonRowCount={6}
+                compact
+                showPageSizeSelector={false}
               />
             )}
-            {visualization === 'TABLE_ONLY' || (!showChart && previewRows.length > 0) ? (
-              <DataTable
-                data={previewRows}
-                keyExtractor={(row) =>
-                  result.columns.map((c) => String(row[c] ?? '')).join('|')
-                }
-                columns={tableColumns}
-              />
-            ) : null}
-            {result.rowCount === 0 && (
+            {result && result.rowCount === 0 && !loading && (
               <p className="py-6 text-center text-xs text-text-secondary">No data</p>
             )}
           </>

@@ -3,7 +3,7 @@ import { Navigate, useParams } from 'react-router-dom'
 import { DashboardGrid } from '../components/dashboard/DashboardGrid'
 import { TopBar } from '../components/layout/TopBar'
 import { dashboardsApi, type DashboardDetail } from '../api/dashboards'
-import { reportsApi, type SavedReportSummary } from '../api/reports'
+import { type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import { useDashboardFilters } from '../hooks/useDashboardFilters'
 import { canViewCustomDashboard, dashboardModuleKey, filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
@@ -31,7 +31,7 @@ export function CustomDashboard() {
     try {
       const [detail, reportList] = await Promise.all([
         dashboardsApi.get(accessToken, id),
-        reportsApi.list(accessToken),
+        dashboardsApi.getReports(accessToken, id),
       ])
       setDashboard(detail)
       setReports(reportList)
@@ -92,6 +92,13 @@ export function CustomDashboard() {
             {dashboard.description && (
               <p className="mb-4 text-sm text-text-secondary">{dashboard.description}</p>
             )}
+            {!filters.enabled && (
+              <div className="mb-4 rounded-md border border-dashed border-border bg-bg-secondary px-4 py-3 text-sm text-text-secondary">
+                <i className="ti ti-filter-off mr-2"></i>
+                No date filter selected — report widgets will not load data until you choose a
+                range.
+              </div>
+            )}
             <DashboardGrid
               key={filterKey}
               accessToken={accessToken!}
@@ -100,6 +107,7 @@ export function CustomDashboard() {
               reportsById={reportsById}
               canEdit={false}
               previewMode
+              dashboardId={id}
               queryFilters={queryFilters}
               onChange={() => {}}
             />

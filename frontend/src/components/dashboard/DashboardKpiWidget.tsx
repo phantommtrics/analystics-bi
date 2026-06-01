@@ -11,6 +11,7 @@ interface DashboardKpiWidgetProps {
   widget: KpiWidgetLayout
   canEdit: boolean
   queryFilters?: Record<string, string>
+  dashboardId?: string
   onEdit?: () => void
   onRemove: () => void
   onDragHandleMouseDown?: (e: React.MouseEvent) => void
@@ -22,6 +23,7 @@ export function DashboardKpiWidget({
   widget,
   canEdit,
   queryFilters,
+  dashboardId,
   onEdit,
   onRemove,
   onDragHandleMouseDown,
@@ -33,10 +35,17 @@ export function DashboardKpiWidget({
 
   const linked = Boolean(widget.savedReportId) && Boolean(widget.valueColumn ?? widget.labelColumn)
 
-  const filterKey = queryFilters ? serializeQueryFilters(queryFilters) : ''
+  const filterKey = serializeQueryFilters(queryFilters)
 
   useEffect(() => {
     if (!linked || !widget.savedReportId) {
+      setResult(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
+
+    if (queryFilters === undefined) {
       setResult(null)
       setError(null)
       setLoading(false)
@@ -47,7 +56,7 @@ export function DashboardKpiWidget({
     setLoading(true)
     setError(null)
     reportsApi
-      .execute(accessToken, widget.savedReportId, queryFilters)
+      .execute(accessToken, widget.savedReportId, queryFilters, { dashboardId })
       .then((data) => {
         if (!cancelled) setResult(data)
       })
@@ -72,6 +81,7 @@ export function DashboardKpiWidget({
     widget.valueColumn,
     widget.rowIndex,
     filterKey,
+    dashboardId,
   ])
 
   const display = resolveKpiDisplay(widget, result)
@@ -129,7 +139,9 @@ export function DashboardKpiWidget({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 p-3">
-        {loading && linked ? (
+        {linked && queryFilters === undefined ? (
+          <p className="text-center text-xs opacity-80">Select a date filter to load</p>
+        ) : loading && linked ? (
           <p className="text-center text-xs opacity-80">Loading...</p>
         ) : error && linked ? (
           <div className="text-center text-xs opacity-90">

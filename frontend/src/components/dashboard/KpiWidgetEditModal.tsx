@@ -77,7 +77,7 @@ export function KpiWidgetEditModal({
 
   const loadPairs = useCallback(
     async (reportId: string) => {
-      if (!accessToken || !reportId) {
+      if (!accessToken || !reportId || queryFilters === undefined) {
         setPairs([])
         return
       }

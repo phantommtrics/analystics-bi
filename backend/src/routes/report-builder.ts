@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { executeDataSourceQuery } from '../datasources/service.js'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize } from '../middleware/authorize.js'
+import { applySqlFilters } from '../reports/sqlFilters.js'
 
 export const reportBuilderRouter = Router()
 
@@ -11,6 +12,7 @@ reportBuilderRouter.use(authenticate)
 const executeQuerySchema = z.object({
   dataSourceId: z.string().min(1),
   sql: z.string().min(1).max(50_000),
+  filters: z.record(z.string(), z.string().max(500)).optional(),
 })
 
 reportBuilderRouter.post('/execute', authorize('report-builder', 'view'), async (req, res) => {
@@ -20,7 +22,8 @@ reportBuilderRouter.post('/execute', authorize('report-builder', 'view'), async 
   }
 
   try {
-    const result = await executeDataSourceQuery(parsed.data.dataSourceId, parsed.data.sql)
+    const sql = applySqlFilters(parsed.data.sql, parsed.data.filters ?? {})
+    const result = await executeDataSourceQuery(parsed.data.dataSourceId, sql)
     return res.json(result)
   } catch (error) {
     if (error instanceof Error) {

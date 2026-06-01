@@ -31,10 +31,14 @@ async function reportBuilderFetch<T>(
 export const reportBuilderApi = {
   executeQuery: (
     token: string,
-    data: { dataSourceId: string; sql: string },
+    data: { dataSourceId: string; sql: string; filters?: Record<string, string> },
   ) =>
     reportBuilderFetch<QueryExecuteResult>('/execute', token, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({
+        dataSourceId: data.dataSourceId,
+        sql: data.sql,
+        filters: data.filters ?? {},
+      }),
     }),
 }

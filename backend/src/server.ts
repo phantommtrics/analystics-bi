@@ -7,6 +7,8 @@ import { adminRouter } from './routes/admin/index.js'
 import { reportBuilderRouter } from './routes/report-builder.js'
 import { reportsRouter } from './routes/reports.js'
 import { dashboardsRouter } from './routes/dashboards.js'
+import { schedulesRouter } from './routes/schedules.js'
+import { startReportScheduleProcessor } from './schedules/processor.js'
 
 const app = express()
 
@@ -26,8 +28,10 @@ app.use('/api/admin', adminRouter)
 app.use('/api/report-builder', reportBuilderRouter)
 app.use('/api/reports', reportsRouter)
 app.use('/api/dashboards', dashboardsRouter)
+app.use('/api/schedules', schedulesRouter)
 app.use('/api', protectedRouter)
 
 app.listen(env.PORT, () => {
   console.log(`API listening on http://localhost:${env.PORT}`)
+  startReportScheduleProcessor()
 })

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   defaultDashboardFilters,
   filtersFromSearchParams,
+  writeFiltersToSearchParams,
   type DashboardFilters,
 } from '../lib/dashboardFilters'
 
@@ -15,20 +16,22 @@ export function useDashboardFilters() {
   )
 
   useEffect(() => {
-    if (searchParams.get('dateFrom') && searchParams.get('dateTo')) return
-    const defaults = defaultDashboardFilters()
+    const hasMode =
+      searchParams.get('dateFilter') === 'none' ||
+      searchParams.get('datePreset') ||
+      (searchParams.get('dateFrom') && searchParams.get('dateTo'))
+    if (hasMode) return
+
     const next = new URLSearchParams(searchParams)
-    next.set('dateFrom', defaults.dateFrom)
-    next.set('dateTo', defaults.dateTo)
+    writeFiltersToSearchParams(next, defaultDashboardFilters())
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams])
 
   function setFilters(next: DashboardFilters) {
     const params = new URLSearchParams(searchParams)
-    params.set('dateFrom', next.dateFrom)
-    params.set('dateTo', next.dateTo)
+    writeFiltersToSearchParams(params, next)
     setSearchParams(params, { replace: true })
   }
 
-  return { filters, setFilters }
+  return { filters, setFilters, filtersEnabled: filters.enabled }
 }

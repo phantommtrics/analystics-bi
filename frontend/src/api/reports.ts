@@ -35,6 +35,9 @@ export interface SavedReportSummary {
   dataSourceId: string
   dataSourceName: string
   dataSourceDatabase: string
+  isPublished: boolean
+  showInSidebarMenu: boolean
+  publishedAt: string | null
   createdByUsername: string | null
   updatedAt: string
   createdAt: string
@@ -48,11 +51,18 @@ export interface SavedReportDetail extends SavedReportSummary {
 export const reportsApi = {
   list: (
     token: string,
-    params?: { search?: string; category?: ReportCategory },
+    params?: {
+      search?: string
+      category?: ReportCategory
+      accessibleOnly?: boolean
+      sidebarMenuOnly?: boolean
+    },
   ) => {
     const qs = new URLSearchParams()
     if (params?.search) qs.set('search', params.search)
     if (params?.category) qs.set('category', params.category)
+    if (params?.accessibleOnly) qs.set('accessibleOnly', 'true')
+    if (params?.sidebarMenuOnly) qs.set('sidebarMenuOnly', 'true')
     const query = qs.toString()
     return reportsFetch<SavedReportSummary[]>(query ? `?${query}` : '', token)
   },
@@ -66,6 +76,7 @@ export const reportsApi = {
       name: string
       description?: string | null
       category: ReportCategory
+      showInSidebarMenu?: boolean
       sql: string
       visualization: ReportVisualization
       dataSourceId: string
@@ -83,6 +94,7 @@ export const reportsApi = {
       name?: string
       description?: string | null
       category?: ReportCategory
+      showInSidebarMenu?: boolean
       sql?: string
       visualization?: ReportVisualization
       dataSourceId?: string
@@ -96,9 +108,23 @@ export const reportsApi = {
   delete: (token: string, id: string) =>
     reportsFetch<void>(`/${id}`, token, { method: 'DELETE' }),
 
-  execute: (token: string, id: string, filters?: Record<string, string>) =>
+  publish: (token: string, id: string) =>
+    reportsFetch<SavedReportDetail>(`/${id}/publish`, token, { method: 'POST' }),
+
+  unpublish: (token: string, id: string) =>
+    reportsFetch<SavedReportDetail>(`/${id}/unpublish`, token, { method: 'POST' }),
+
+  execute: (
+    token: string,
+    id: string,
+    filters?: Record<string, string>,
+    options?: { dashboardId?: string },
+  ) =>
     reportsFetch<QueryExecuteResult>(`/${id}/execute`, token, {
       method: 'POST',
-      body: JSON.stringify({ filters: filters ?? {} }),
+      body: JSON.stringify({
+        filters: filters ?? {},
+        ...(options?.dashboardId ? { dashboardId: options.dashboardId } : {}),
+      }),
     }),
 }

@@ -1,10 +1,16 @@
 import type { DashboardDetail } from '../api/dashboards'
 import { emptyDashboardLayout, type DashboardLayout } from './dashboardLayout'
+import {
+  isSidebarReportCategory,
+  type SidebarReportCategory,
+} from './reportConstants'
 
 export type DashboardEditorSnapshot = {
   name: string
   description: string
   layout: DashboardLayout
+  showInSidebarMenu: boolean
+  sidebarCategory: SidebarReportCategory | null
 }
 
 export type DashboardTab = {
@@ -14,6 +20,8 @@ export type DashboardTab = {
   name: string
   description: string
   layout: DashboardLayout
+  showInSidebarMenu: boolean
+  sidebarCategory: SidebarReportCategory | null
   isPublished: boolean
   savedSnapshot: DashboardEditorSnapshot | null
 }
@@ -29,6 +37,8 @@ export function createDashboardTab(
       | 'description'
       | 'layout'
       | 'savedDashboardId'
+      | 'showInSidebarMenu'
+      | 'sidebarCategory'
       | 'isPublished'
       | 'savedSnapshot'
     >
@@ -44,6 +54,8 @@ export function createDashboardTab(
     name: opts?.name ?? 'Untitled dashboard',
     description: opts?.description ?? '',
     layout,
+    showInSidebarMenu: opts?.showInSidebarMenu ?? false,
+    sidebarCategory: opts?.sidebarCategory ?? null,
     isPublished: opts?.isPublished ?? false,
     savedSnapshot: opts?.savedSnapshot ?? null,
   }
@@ -51,10 +63,16 @@ export function createDashboardTab(
 
 export function dashboardTabFromDetail(dashboard: DashboardDetail): DashboardTab {
   const description = dashboard.description ?? ''
+  const sidebarCategory =
+    dashboard.sidebarCategory && isSidebarReportCategory(dashboard.sidebarCategory)
+      ? dashboard.sidebarCategory
+      : null
   const snapshot: DashboardEditorSnapshot = {
     name: dashboard.name,
     description,
     layout: dashboard.layout,
+    showInSidebarMenu: dashboard.showInSidebarMenu,
+    sidebarCategory,
   }
   return createDashboardTab({
     title: dashboard.name,
@@ -62,6 +80,8 @@ export function dashboardTabFromDetail(dashboard: DashboardDetail): DashboardTab
     name: dashboard.name,
     description,
     layout: dashboard.layout,
+    showInSidebarMenu: dashboard.showInSidebarMenu,
+    sidebarCategory,
     isPublished: dashboard.isPublished,
     savedSnapshot: snapshot,
   })
@@ -83,6 +103,8 @@ export function isDashboardTabDirty(tab: DashboardTab): boolean {
   return (
     tab.name !== s.name ||
     tab.description !== s.description ||
+    tab.showInSidebarMenu !== s.showInSidebarMenu ||
+    tab.sidebarCategory !== s.sidebarCategory ||
     JSON.stringify(tab.layout) !== JSON.stringify(s.layout)
   )
 }

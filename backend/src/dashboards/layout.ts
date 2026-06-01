@@ -64,3 +64,15 @@ export function isKpiWidget(widget: DashboardWidgetLayout): widget is KpiWidgetL
 export function isReportWidget(widget: DashboardWidgetLayout): widget is ReportWidgetLayout {
   return !isKpiWidget(widget)
 }
+
+export function extractReportIdsFromLayout(layout: DashboardLayout): string[] {
+  return [
+    ...new Set([
+      ...layout.widgets.filter(isReportWidget).map((w) => w.savedReportId),
+      ...layout.widgets
+        .filter(isKpiWidget)
+        .map((w) => w.savedReportId)
+        .filter((id): id is string => Boolean(id)),
+    ]),
+  ]
+}

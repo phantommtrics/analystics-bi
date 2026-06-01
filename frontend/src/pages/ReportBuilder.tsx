@@ -21,6 +21,8 @@ import {
   type ReportCategory,
   type ReportVisualization,
 } from '../lib/reportConstants'
+import { ReportVariablesPanel } from '../components/report/ReportVariablesPanel'
+import { useReportVariables } from '../hooks/useReportVariables'
 import { rowsToChartData, rowsToPieData } from '../lib/queryResultChart'
 import { createQueryTab, duplicateTabTitle, type QueryTab } from '../lib/queryTabs'
 
@@ -77,11 +79,26 @@ export function ReportBuilder() {
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<SavedReportSummary | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [isPublished, setIsPublished] = useState(false)
+  const [publishLoading, setPublishLoading] = useState(false)
+  const [pendingPublish, setPendingPublish] = useState(false)
+  const [pendingUnpublish, setPendingUnpublish] = useState(false)
 
   const activeTab = useMemo(
     () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
     [tabs, activeTabId],
   )
+
+  const {
+    variables,
+    values: variableValues,
+    queryFilters,
+    hasDateVariables,
+    dateFilters,
+    dateFiltersEnabled,
+    setVariable,
+    setDateFilters,
+  } = useReportVariables(activeTab.sql)
 
   const updateActiveTab = useCallback(
     (patch: Partial<QueryTab>) => {
@@ -150,6 +167,7 @@ export function ReportBuilder() {
       setReportDescription(report.description ?? '')
       setReportCategory(report.category)
       setSelectedDataSourceId(report.dataSourceId)
+      setIsPublished(report.isPublished)
       setSavedSnapshot({
         name: report.name,
         description: report.description ?? '',
@@ -227,6 +245,14 @@ export function ReportBuilder() {
 
   const runQuery = useCallback(async () => {
     if (!accessToken || !selectedDataSourceId || !activeTab.sql.trim()) return
+    if (hasDateVariables && !dateFiltersEnabled) {
+      updateActiveTab({
+        queryError: 'Select a date filter before running this query.',
+        queryResult: null,
+        previewOpen: true,
+      })
+      return
+    }
     setIsRunning(true)
     updateActiveTab({
       queryError: null,
@@ -238,6 +264,7 @@ export function ReportBuilder() {
       const result = await reportBuilderApi.executeQuery(accessToken, {
         dataSourceId: selectedDataSourceId,
         sql: activeTab.sql,
+        filters: queryFilters ?? {},
       })
       updateActiveTab({ queryResult: result, queryError: null, previewOpen: true })
     } catch (err) {
@@ -249,7 +276,15 @@ export function ReportBuilder() {
     } finally {
       setIsRunning(false)
     }
-  }, [accessToken, selectedDataSourceId, activeTab.sql, updateActiveTab])
+  }, [
+    accessToken,
+    selectedDataSourceId,
+    activeTab.sql,
+    queryFilters,
+    hasDateVariables,
+    dateFiltersEnabled,
+    updateActiveTab,
+  ])
 
   useEffect(() => {
     const reportId = searchParams.get('reportId')
@@ -283,6 +318,7 @@ export function ReportBuilder() {
 
   useEffect(() => {
     if (searchParams.get('run') !== '1' || !selectedDataSourceId) return
+    if (hasDateVariables && !dateFiltersEnabled) return
     void runQuery()
     setSearchParams(
       (prev) => {
@@ -292,7 +328,14 @@ export function ReportBuilder() {
       },
       { replace: true },
     )
-  }, [searchParams, selectedDataSourceId, runQuery, setSearchParams])
+  }, [
+    searchParams,
+    selectedDataSourceId,
+    hasDateVariables,
+    dateFiltersEnabled,
+    runQuery,
+    setSearchParams,
+  ])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -314,6 +357,7 @@ export function ReportBuilder() {
     setActiveTabId(tab.id)
     setPreviewExpanded(false)
     setActiveReportId(null)
+    setIsPublished(false)
     setReportName('Untitled report')
     setReportDescription('')
     setReportCategory('GENERAL')
@@ -438,6 +482,7 @@ export function ReportBuilder() {
       }
 
       setReportContext(saved)
+      setIsPublished(saved.isPublished)
       setTabs((prev) =>
         prev.map((t) =>
           t.id === activeTabId
@@ -495,6 +540,42 @@ export function ReportBuilder() {
     } finally {
       setDeleteLoading(false)
       setPendingDelete(null)
+    }
+  }
+
+  async function confirmPublish() {
+    if (!accessToken || !activeReportId) return
+    setPublishLoading(true)
+    setBannerError('')
+    try {
+      const saved = await reportsApi.publish(accessToken, activeReportId)
+      setIsPublished(saved.isPublished)
+      setBannerSuccess(
+        `"${saved.name}" is published. In Roles, grant Reports view plus this report's view permission.`,
+      )
+      await loadSavedReports()
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : 'Failed to publish report')
+    } finally {
+      setPublishLoading(false)
+      setPendingPublish(false)
+    }
+  }
+
+  async function confirmUnpublish() {
+    if (!accessToken || !activeReportId) return
+    setPublishLoading(true)
+    setBannerError('')
+    try {
+      const saved = await reportsApi.unpublish(accessToken, activeReportId)
+      setIsPublished(saved.isPublished)
+      setBannerSuccess(`"${saved.name}" is unpublished and hidden from the report catalog.`)
+      await loadSavedReports()
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : 'Failed to unpublish report')
+    } finally {
+      setPublishLoading(false)
+      setPendingUnpublish(false)
     }
   }
 
@@ -572,9 +653,15 @@ export function ReportBuilder() {
                     Unsaved
                   </span>
                 ) : activeReportId ? (
-                  <span className="rounded-full bg-semantic-green/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-semantic-green">
-                    Saved
-                  </span>
+                  isPublished ? (
+                    <span className="rounded-full bg-brand-blue/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-blue">
+                      Published
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-text-secondary">
+                      Draft
+                    </span>
+                  )
                 ) : null}
               </div>
               <p className="mt-0.5 text-xs text-text-secondary">
@@ -595,6 +682,29 @@ export function ReportBuilder() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {canEdit && activeReportId && !isDirty && (
+                isPublished ? (
+                  <button
+                    type="button"
+                    onClick={() => setPendingUnpublish(true)}
+                    disabled={publishLoading}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-primary px-3 py-1.5 text-xs font-medium text-text-primary transition-colors hover:bg-bg-secondary disabled:opacity-50"
+                  >
+                    <i className="ti ti-eye-off text-sm"></i>
+                    Unpublish
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPendingPublish(true)}
+                    disabled={publishLoading}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-brand-blue px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-blue/90 disabled:opacity-50"
+                  >
+                    <i className="ti ti-world-upload text-sm"></i>
+                    Publish
+                  </button>
+                )
+              )}
               <select
                 value={selectedDataSourceId}
                 onChange={(e) => setSelectedDataSourceId(e.target.value)}
@@ -632,6 +742,15 @@ export function ReportBuilder() {
               onSelect={(id) => void handleSelectTab(id)}
               onAdd={handleAddTab}
               onClose={handleCloseTab}
+            />
+
+            <ReportVariablesPanel
+              variables={variables}
+              values={variableValues}
+              hasDateVariables={hasDateVariables}
+              dateFilters={dateFilters}
+              onVariableChange={setVariable}
+              onDateFiltersChange={setDateFilters}
             />
 
             <div className="flex min-h-0 flex-1 flex-col">
@@ -687,6 +806,27 @@ export function ReportBuilder() {
         loading={isSaving}
         onConfirm={handleSaveConfirm}
         onCancel={() => setSaveModalOpen(false)}
+      />
+
+      <ConfirmModal
+        open={pendingPublish}
+        title="Publish report?"
+        message={`Publish "${reportName}"? Per-report view permissions will appear in Roles under Reports. Users need Reports view and this report's view to open it.`}
+        confirmLabel="Publish"
+        loading={publishLoading}
+        onConfirm={confirmPublish}
+        onCancel={() => setPendingPublish(false)}
+      />
+
+      <ConfirmModal
+        open={pendingUnpublish}
+        title="Unpublish report?"
+        message={`Unpublish "${reportName}"? It will be removed from the report catalog and role permissions for this report.`}
+        confirmLabel="Unpublish"
+        variant="danger"
+        loading={publishLoading}
+        onConfirm={confirmUnpublish}
+        onCancel={() => setPendingUnpublish(false)}
       />
 
       <ConfirmModal

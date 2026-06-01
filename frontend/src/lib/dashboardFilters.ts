@@ -1,62 +1,183 @@
 import type { UserType } from '../auth/types'
+import { expandQueryFilters } from './sqlVariables'
+import {
+  currentMonthRange,
+  currentQuarterRange,
+  currentWeekRange,
+  currentYearRange,
+  lastMonthRange,
+  lastQuarterRange,
+  lastWeekRange,
+  lastYearRange,
+  rollingDaysRange,
+  todayRange,
+  yesterdayRange,
+  type DateRange,
+} from './dateFilterRanges'
+
+export { expandQueryFilters } from './sqlVariables'
+
+export type DateFilterPresetId =
+  | 'none'
+  | 'custom'
+  | 'today'
+  | 'yesterday'
+  | 'current-week'
+  | 'current-month'
+  | 'current-quarter'
+  | 'current-year'
+  | 'last-week'
+  | 'last-month'
+  | 'last-quarter'
+  | 'last-year'
+  | 'last-7-days'
+  | 'last-30-days'
+  | 'last-90-days'
+  | 'last-365-days'
 
 export type DashboardFilters = {
+  /** When false, report widgets must not fetch data. */
+  enabled: boolean
   dateFrom: string
   dateTo: string
+  preset: DateFilterPresetId
 }
 
-function formatIsoDate(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+export type DatePresetGroup = {
+  label: string
+  presets: Array<{
+    id: Exclude<DateFilterPresetId, 'none' | 'custom'>
+    label: string
+    getRange: () => DateRange
+  }>
+}
+
+export const DATE_PRESET_GROUPS: DatePresetGroup[] = [
+  {
+    label: 'Current',
+    presets: [
+      { id: 'current-week', label: 'This week', getRange: currentWeekRange },
+      { id: 'current-month', label: 'This month', getRange: currentMonthRange },
+      { id: 'current-quarter', label: 'This quarter', getRange: currentQuarterRange },
+      { id: 'current-year', label: 'This year', getRange: currentYearRange },
+    ],
+  },
+  {
+    label: 'Previous',
+    presets: [
+      { id: 'last-week', label: 'Last week', getRange: lastWeekRange },
+      { id: 'last-month', label: 'Last month', getRange: lastMonthRange },
+      { id: 'last-quarter', label: 'Last quarter', getRange: lastQuarterRange },
+      { id: 'last-year', label: 'Last year', getRange: lastYearRange },
+    ],
+  },
+  {
+    label: 'Rolling',
+    presets: [
+      { id: 'today', label: 'Today', getRange: todayRange },
+      { id: 'yesterday', label: 'Yesterday', getRange: yesterdayRange },
+      { id: 'last-7-days', label: 'Last 7 days', getRange: () => rollingDaysRange(7) },
+      { id: 'last-30-days', label: 'Last 30 days', getRange: () => rollingDaysRange(30) },
+      { id: 'last-90-days', label: 'Last 90 days', getRange: () => rollingDaysRange(90) },
+      { id: 'last-365-days', label: 'Last year', getRange: () => rollingDaysRange(365) },
+    ],
+  },
+]
+
+export const ALL_DATE_PRESETS = DATE_PRESET_GROUPS.flatMap((g) => g.presets)
+
+export function getPresetRange(presetId: DateFilterPresetId): DateRange | null {
+  if (presetId === 'none' || presetId === 'custom') return null
+  const preset = ALL_DATE_PRESETS.find((p) => p.id === presetId)
+  return preset ? preset.getRange() : null
 }
 
 export function defaultDashboardFilters(): DashboardFilters {
-  const today = new Date()
-  const from = new Date(today.getFullYear(), today.getMonth(), 1)
+  const range = currentMonthRange()
   return {
-    dateFrom: formatIsoDate(from),
-    dateTo: formatIsoDate(today),
+    enabled: true,
+    preset: 'current-month',
+    ...range,
   }
+}
+
+export function filtersWithPreset(
+  presetId: Exclude<DateFilterPresetId, 'none' | 'custom'>,
+): DashboardFilters {
+  const range = getPresetRange(presetId)!
+  return { enabled: true, preset: presetId, ...range }
+}
+
+export function filtersDisabled(): DashboardFilters {
+  return { enabled: false, preset: 'none', dateFrom: '', dateTo: '' }
 }
 
 export function filtersFromSearchParams(params: URLSearchParams): DashboardFilters {
+  if (params.get('dateFilter') === 'none') {
+    return filtersDisabled()
+  }
+
+  const presetParam = params.get('datePreset') as DateFilterPresetId | null
+  if (presetParam && presetParam !== 'custom' && presetParam !== 'none') {
+    const range = getPresetRange(presetParam)
+    if (range) {
+      return { enabled: true, preset: presetParam, ...range }
+    }
+  }
+
   const dateFrom = params.get('dateFrom')
   const dateTo = params.get('dateTo')
   if (dateFrom && dateTo) {
-    return { dateFrom, dateTo }
+    return {
+      enabled: true,
+      preset: 'custom',
+      dateFrom,
+      dateTo,
+    }
   }
+
   return defaultDashboardFilters()
 }
 
-function addDays(isoDate: string, days: number): string {
-  const date = new Date(`${isoDate}T12:00:00`)
-  date.setDate(date.getDate() + days)
-  return formatIsoDate(date)
-}
-
-/** Map dashboard date range to SQL placeholder values used by saved reports. */
-export function filtersToQueryRecord(filters: DashboardFilters): Record<string, string> {
-  const { dateFrom, dateTo } = filters
-  return {
-    dateFrom,
-    dateTo,
-    startDate: dateFrom,
-    endDate: dateTo,
-    start_date: dateFrom,
-    end_date: dateTo,
-    fromDate: dateFrom,
-    toDate: dateTo,
-    from_date: dateFrom,
-    to_date: dateTo,
-    dateToEnd: `${dateTo} 23:59:59`,
-    endDateTime: `${dateTo} 23:59:59.999`,
-    dateToExclusive: addDays(dateTo, 1),
+export function writeFiltersToSearchParams(
+  params: URLSearchParams,
+  filters: DashboardFilters,
+): void {
+  if (!filters.enabled || filters.preset === 'none') {
+    params.set('dateFilter', 'none')
+    params.delete('datePreset')
+    params.delete('dateFrom')
+    params.delete('dateTo')
+    return
   }
+
+  params.delete('dateFilter')
+  if (filters.preset !== 'custom') {
+    params.set('datePreset', filters.preset)
+  } else {
+    params.delete('datePreset')
+  }
+  params.set('dateFrom', filters.dateFrom)
+  params.set('dateTo', filters.dateTo)
 }
 
-export function serializeQueryFilters(filters: Record<string, string>): string {
+/** Map dashboard date range to SQL placeholder values; undefined when filter disabled. */
+export function filtersToQueryRecord(
+  filters: DashboardFilters,
+): Record<string, string> | undefined {
+  if (!filters.enabled) return undefined
+  return expandQueryFilters({
+    dateFrom: filters.dateFrom,
+    dateTo: filters.dateTo,
+  })
+}
+
+export const NO_QUERY_FILTERS_KEY = '__no_date_filter__'
+
+export function serializeQueryFilters(
+  filters: Record<string, string> | undefined,
+): string {
+  if (!filters) return NO_QUERY_FILTERS_KEY
   return JSON.stringify(filters)
 }
 
@@ -87,40 +208,14 @@ export function canViewCustomDashboard(
   return hasExplicitPermission(permissions, dashboardModuleKey(dashboardId), 'view')
 }
 
-export const DATE_FILTER_PRESETS = [
-  {
-    label: 'Today',
-    getRange: () => {
-      const today = new Date()
-      const iso = formatIsoDate(today)
-      return { dateFrom: iso, dateTo: iso }
-    },
-  },
-  {
-    label: 'Last 7 days',
-    getRange: () => {
-      const today = new Date()
-      const from = new Date(today)
-      from.setDate(from.getDate() - 6)
-      return { dateFrom: formatIsoDate(from), dateTo: formatIsoDate(today) }
-    },
-  },
-  {
-    label: 'Last 30 days',
-    getRange: () => {
-      const today = new Date()
-      const from = new Date(today)
-      from.setDate(from.getDate() - 29)
-      return { dateFrom: formatIsoDate(from), dateTo: formatIsoDate(today) }
-    },
-  },
-  {
-    label: 'This month',
-    getRange: () => defaultDashboardFilters(),
-  },
-] as const
-
 export function formatFilterLabel(filters: DashboardFilters): string {
+  if (!filters.enabled) return 'No date filter'
+
+  if (filters.preset !== 'custom') {
+    const preset = ALL_DATE_PRESETS.find((p) => p.id === filters.preset)
+    if (preset) return preset.label
+  }
+
   if (filters.dateFrom === filters.dateTo) {
     return new Date(`${filters.dateFrom}T12:00:00`).toLocaleDateString(undefined, {
       month: 'short',
@@ -139,3 +234,9 @@ export function formatFilterLabel(filters: DashboardFilters): string {
   })
   return `${from} – ${to}`
 }
+
+/** @deprecated Use DATE_PRESET_GROUPS */
+export const DATE_FILTER_PRESETS = ALL_DATE_PRESETS.map((p) => ({
+  label: p.label,
+  getRange: p.getRange,
+}))

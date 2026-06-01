@@ -17,6 +17,8 @@ interface TopBarProps {
     onClick: () => void
     icon?: string
   }
+  /** Optional row below the title bar (e.g. catalog search / category filters). */
+  toolbar?: React.ReactNode
 }
 
 export function TopBar({
@@ -27,11 +29,13 @@ export function TopBar({
   onDateFilterChange,
   showExport = true,
   primaryAction,
+  toolbar,
 }: TopBarProps) {
   const { openSidebar } = useSidebar()
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-border bg-bg-primary px-4 sm:px-6">
+    <header className="sticky top-0 z-10 border-b border-border bg-bg-primary">
+    <div className="flex h-16 items-center justify-between px-4 sm:px-6">
       <div className="flex min-w-0 flex-col">
         <h1 className="truncate text-xl font-medium text-text-primary">
           {title}
@@ -87,6 +91,10 @@ export function TopBar({
           <i className="ti ti-menu-2 text-xl"></i>
         </button>
       </div>
+    </div>
+    {toolbar && (
+      <div className="border-t border-border px-4 py-2.5 sm:px-6">{toolbar}</div>
+    )}
     </header>
   )
 }

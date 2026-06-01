@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  DATE_FILTER_PRESETS,
-  formatFilterLabel,
-  type DashboardFilters,
-} from '../../lib/dashboardFilters'
+import { DateRangeFilterPicker } from '../shared/DateRangeFilterPicker'
+import { formatFilterLabel, type DashboardFilters } from '../../lib/dashboardFilters'
 
 interface DashboardDateFilterProps {
   filters: DashboardFilters
@@ -39,59 +36,26 @@ export function DashboardDateFilter({
         onClick={() => setOpen((o) => !o)}
         className={`flex items-center gap-2 rounded-sm border border-border bg-bg-secondary text-text-primary transition-colors hover:bg-bg-tertiary ${
           compact ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm'
-        }`}
+        } ${!filters.enabled ? 'border-dashed text-text-secondary' : ''}`}
       >
-        <i className="ti ti-calendar text-text-secondary"></i>
+        <i
+          className={`ti ${filters.enabled ? 'ti-calendar' : 'ti-filter-off'} text-text-secondary`}
+        ></i>
         <span>{formatFilterLabel(filters)}</span>
         <i
           className={`ti ti-chevron-down text-xs text-text-secondary transition-transform ${open ? 'rotate-180' : ''}`}
         ></i>
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-64 rounded-md border border-border bg-bg-primary p-3 shadow-lg">
-          <div className="mb-3 space-y-2">
-            <p className="text-xs font-medium text-text-secondary">Presets</p>
-            <div className="flex flex-wrap gap-1">
-              {DATE_FILTER_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => {
-                    onChange(preset.getRange())
-                    setOpen(false)
-                  }}
-                  className="rounded-sm border border-border px-2 py-1 text-xs text-text-primary hover:bg-bg-secondary"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="block text-xs text-text-secondary">
-              From
-              <input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
-                className="mt-1 w-full rounded-sm border border-border bg-bg-secondary px-2 py-1 text-sm"
-              />
-            </label>
-            <label className="block text-xs text-text-secondary">
-              To
-              <input
-                type="date"
-                value={filters.dateTo}
-                onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
-                className="mt-1 w-full rounded-sm border border-border bg-bg-secondary px-2 py-1 text-sm"
-              />
-            </label>
-          </div>
-          <p className="mt-2 text-[10px] text-text-secondary">
-            Applied to all report widgets. Use placeholders like{' '}
-            <code className="rounded bg-bg-secondary px-1">:dateFrom</code> and{' '}
-            <code className="rounded bg-bg-secondary px-1">:dateTo</code> in report SQL.
-          </p>
+        <div className="absolute right-0 top-full z-30 mt-1 max-h-[min(80vh,520px)] w-80 overflow-y-auto rounded-md border border-border bg-bg-primary p-3 shadow-lg">
+          <DateRangeFilterPicker
+            filters={filters}
+            onChange={(next) => {
+              onChange(next)
+              if (!next.enabled) setOpen(false)
+            }}
+            hint="Applied to all report widgets. Use :dateFrom and :dateTo in report SQL."
+          />
         </div>
       )}
     </div>

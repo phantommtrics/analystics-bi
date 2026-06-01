@@ -22,6 +22,7 @@ export function ReportCatalog() {
   const { accessToken, hasPermission } = useAuth()
   const navigate = useNavigate()
   const canEdit = hasPermission('reports', 'edit') || hasPermission('report-builder', 'edit')
+  const canCreateReport = hasPermission('report-builder', 'edit')
   const canDelete =
     hasPermission('reports', 'delete') || hasPermission('report-builder', 'delete')
 
@@ -38,6 +39,7 @@ export function ReportCatalog() {
     const list = await reportsApi.list(accessToken, {
       search: search.trim() || undefined,
       category: activeCategory === 'All' ? undefined : activeCategory,
+      accessibleOnly: true,
     })
     setReports(list)
   }, [accessToken, search, activeCategory])
@@ -52,10 +54,12 @@ export function ReportCatalog() {
 
   const filteredReports = useMemo(() => reports, [reports])
 
-  function openInBuilder(reportId: string, run = false) {
-    const params = new URLSearchParams({ reportId })
-    if (run) params.set('run', '1')
-    navigate(`/reports/builder?${params.toString()}`)
+  function openInBuilder(reportId: string) {
+    navigate(`/reports/builder?reportId=${encodeURIComponent(reportId)}`)
+  }
+
+  function openReportView(reportId: string) {
+    navigate(`/reports/view/${encodeURIComponent(reportId)}`)
   }
 
   async function confirmDelete() {
@@ -77,14 +81,41 @@ export function ReportCatalog() {
       <TopBar
         title="Report Catalog"
         showDateFilter={false}
+        showExport={false}
         primaryAction={
-          canEdit
+          canCreateReport
             ? {
                 label: 'New report',
                 onClick: () => navigate('/reports/builder'),
                 icon: 'ti-plus',
               }
             : undefined
+        }
+        toolbar={
+          <div className="flex flex-col items-start justify-between gap-3 lg:flex-row lg:items-center">
+            <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-bg-secondary p-1">
+              {categoryFilters.map((cat) => (
+                <button
+                  key={cat.value}
+                  type="button"
+                  onClick={() => setActiveCategory(cat.value)}
+                  className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${activeCategory === cat.value ? 'bg-bg-primary text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'}`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative w-full lg:w-80">
+              <i className="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary"></i>
+              <input
+                type="text"
+                placeholder="Search reports..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded-sm border border-border bg-bg-primary py-2 pl-10 pr-4 text-sm text-text-primary outline-none transition-colors focus:border-brand-blue"
+              />
+            </div>
+          </div>
         }
       />
 
@@ -94,31 +125,6 @@ export function ReportCatalog() {
             {error}
           </div>
         )}
-
-        <div className="flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-center">
-          <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-bg-secondary p-1">
-            {categoryFilters.map((cat) => (
-              <button
-                key={cat.value}
-                onClick={() => setActiveCategory(cat.value)}
-                className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${activeCategory === cat.value ? 'bg-bg-primary text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'}`}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="relative w-full lg:w-80">
-            <i className="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary"></i>
-            <input
-              type="text"
-              placeholder="Search reports..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-sm border border-border bg-bg-primary py-2 pl-10 pr-4 text-sm text-text-primary outline-none transition-colors focus:border-brand-blue"
-            />
-          </div>
-        </div>
 
         <div className="flex items-center justify-between px-1 text-xs text-text-secondary">
           <span>
@@ -131,6 +137,7 @@ export function ReportCatalog() {
                   {filteredReports.length}
                 </span>{' '}
                 saved report{filteredReports.length === 1 ? '' : 's'}
+                {!loading && ' you can access'}
               </>
             )}
           </span>
@@ -153,13 +160,13 @@ export function ReportCatalog() {
             ) : filteredReports.length === 0 ? (
               <div className="py-16 text-center text-text-secondary">
                 <i className="ti ti-file-search mb-2 block text-3xl"></i>
-                <p className="text-sm">No saved reports yet</p>
-                {canEdit && (
+                <p className="text-sm">No published reports available</p>
+                {canCreateReport && (
                   <button
                     onClick={() => navigate('/reports/builder')}
                     className="mt-2 text-xs text-brand-blue hover:underline"
                   >
-                    Create your first report
+                    Create and publish a report
                   </button>
                 )}
               </div>
@@ -207,20 +214,22 @@ export function ReportCatalog() {
                     </div>
 
                     <div className="col-span-12 flex items-center justify-end gap-1 md:col-span-2">
-                      <button
-                        type="button"
-                        className="rounded-sm px-2 py-1.5 text-xs text-text-secondary transition-colors hover:bg-brand-blue/10 hover:text-brand-blue"
-                        title="Open in builder"
-                        onClick={() => openInBuilder(report.id)}
-                      >
-                        <i className="ti ti-edit mr-1"></i>
-                        Edit
-                      </button>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          className="rounded-sm px-2 py-1.5 text-xs text-text-secondary transition-colors hover:bg-brand-blue/10 hover:text-brand-blue"
+                          title="Open in builder"
+                          onClick={() => openInBuilder(report.id)}
+                        >
+                          <i className="ti ti-edit mr-1"></i>
+                          Edit
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="rounded-sm p-1.5 text-text-secondary transition-colors hover:bg-brand-blue/10 hover:text-brand-blue"
                         title="Run report"
-                        onClick={() => openInBuilder(report.id, true)}
+                        onClick={() => openReportView(report.id)}
                       >
                         <i className="ti ti-player-play text-base"></i>
                       </button>

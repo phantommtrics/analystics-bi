@@ -83,7 +83,7 @@ export function ReportSaveModal({
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Category</label>
+            <label className="mb-1.5 block text-sm font-medium">Catalog category</label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as ReportCategory)}
@@ -95,6 +95,10 @@ export function ReportSaveModal({
                 </option>
               ))}
             </select>
+            <p className="mt-1.5 text-xs text-text-secondary">
+              To show a composed view in the sidebar, use Dashboard Builder and enable sidebar
+              menu there.
+            </p>
           </div>
         </div>
 

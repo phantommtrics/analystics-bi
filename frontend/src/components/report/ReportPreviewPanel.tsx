@@ -1,16 +1,11 @@
-import { DataTable } from '../ui/DataTable'
-import type { Column } from '../ui/DataTable'
 import { LoadingButton } from '../ui/LoadingButton'
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import { REPORT_VISUALIZATIONS, type ReportVisualization } from '../../lib/reportConstants'
-import {
-  isNumericColumn,
-  type ChartPreviewData,
-  type PieSlice,
-} from '../../lib/queryResultChart'
+import type { ChartPreviewData, PieSlice } from '../../lib/queryResultChart'
+import { formatQueryStatus } from '../../lib/queryResultTable'
 import { ReportChartPreview } from './ReportChartPreview'
-
-const PREVIEW_ROW_LIMIT = 50
+import { ChartPreviewSkeleton } from './ChartPreviewSkeleton'
+import { QueryResultsTable } from './QueryResultsTable'
 
 interface ReportPreviewPanelProps {
   visualization: ReportVisualization
@@ -37,33 +32,24 @@ export function ReportPreviewPanel({
   onToggleExpand,
   onClosePreview,
 }: ReportPreviewPanelProps) {
-  const previewRows = queryResult?.rows.slice(0, PREVIEW_ROW_LIMIT) ?? []
-
-  const tableColumns: Column<Record<string, unknown>>[] = queryResult
-    ? queryResult.columns.map((col) => ({
-        header: col,
-        accessor: (row: Record<string, unknown>) => {
-          const v = row[col]
-          if (v === null || v === undefined) return '—'
-          return String(v)
-        },
-        isNumeric: isNumericColumn(col, queryResult.rows),
-        className: isNumericColumn(col, queryResult.rows) ? 'font-mono' : '',
-      }))
-    : []
-
   const statusMessage = queryError
     ? queryError
     : queryResult
-      ? `${queryResult.rowCount} row${queryResult.rowCount === 1 ? '' : 's'} · ${queryResult.latencyMs}ms${queryResult.truncated ? ' · truncated at 500' : ''}`
+      ? formatQueryStatus(queryResult, { loading: isRunning })
       : isRunning
-        ? 'Running query...'
+        ? 'Running query…'
         : null
 
   const showChart =
+    !isRunning &&
     visualization !== 'TABLE_ONLY' &&
     queryResult &&
     (chartData.series.length > 0 || pieData.length > 0)
+
+  const showChartSkeleton =
+    isRunning && visualization !== 'TABLE_ONLY'
+
+  const showTable = isRunning || (queryResult !== null && queryResult.rows.length > 0)
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-tertiary">
@@ -119,8 +105,12 @@ export function ReportPreviewPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {isRunning && !queryResult && !queryError && (
-          <div className="flex h-full min-h-[120px] items-center justify-center gap-2 text-sm text-text-secondary">
-            <LoadingButton loading variant="secondary" className="pointer-events-none px-3 py-1.5 text-xs">
+          <div className="mb-3 flex min-h-[120px] items-center justify-center gap-2 text-sm text-text-secondary">
+            <LoadingButton
+              loading
+              variant="secondary"
+              className="pointer-events-none px-3 py-1.5 text-xs"
+            >
               Running
             </LoadingButton>
           </div>
@@ -130,8 +120,14 @@ export function ReportPreviewPanel({
           <p className="py-8 text-center text-sm text-text-secondary">No results yet.</p>
         )}
 
-        {queryResult && queryResult.rows.length === 0 && !queryError && (
+        {queryResult && queryResult.rows.length === 0 && !queryError && !isRunning && (
           <p className="py-8 text-center text-sm text-text-secondary">Query returned no rows.</p>
+        )}
+
+        {showChartSkeleton && (
+          <div className="mb-4">
+            <ChartPreviewSkeleton height={previewExpanded ? 360 : 220} />
+          </div>
         )}
 
         {showChart && (
@@ -148,26 +144,20 @@ export function ReportPreviewPanel({
         {queryResult &&
           visualization !== 'TABLE_ONLY' &&
           !showChart &&
+          !isRunning &&
           queryResult.rows.length > 0 && (
             <p className="mb-3 text-sm text-text-secondary">
               No numeric columns for charting. Showing table only.
             </p>
           )}
 
-        {previewRows.length > 0 && queryResult && (
-          <div className="overflow-hidden rounded-md border border-border bg-bg-primary">
-            <div className="border-b border-border px-3 py-2 text-xs font-medium text-text-secondary">
-              Results ({Math.min(PREVIEW_ROW_LIMIT, queryResult.rowCount)} of{' '}
-              {queryResult.rowCount})
-            </div>
-            <DataTable
-              data={previewRows}
-              keyExtractor={(row) =>
-                queryResult.columns.map((c) => String(row[c] ?? '')).join('|')
-              }
-              columns={tableColumns}
-            />
-          </div>
+        {showTable && (
+          <QueryResultsTable
+            queryResult={queryResult}
+            loading={isRunning}
+            skeletonColumns={queryResult?.columns}
+            skeletonRowCount={previewExpanded ? 12 : 10}
+          />
         )}
       </div>
     </div>

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { Permission } from '../../api/admin'
 
 const CUSTOM_DASHBOARD_PREFIX = 'custom-dashboard-'
+const CUSTOM_REPORT_PREFIX = 'custom-report-'
 
 const ACTION_LABELS: Record<string, string> = {
   view: 'View',
@@ -14,6 +15,8 @@ const ACTION_LABELS: Record<string, string> = {
 
 const MODULE_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
+  reports: 'Reports',
+  schedules: 'Report Schedules',
   'system-config-roles': 'System Config — Roles',
   'system-config-groups': 'System Config — User Groups',
   'system-config-operators': 'System Config — Operators',
@@ -21,6 +24,14 @@ const MODULE_LABELS: Record<string, string> = {
 
 function isCustomDashboardModule(key: string) {
   return key.startsWith(CUSTOM_DASHBOARD_PREFIX)
+}
+
+function isCustomReportModule(key: string) {
+  return key.startsWith(CUSTOM_REPORT_PREFIX)
+}
+
+function isCustomChildModule(key: string) {
+  return isCustomDashboardModule(key) || isCustomReportModule(key)
 }
 
 function formatModule(key: string, permissions: Permission[]) {
@@ -33,6 +44,13 @@ function formatModule(key: string, permissions: Permission[]) {
       return match.name
     }
     return 'Custom dashboard'
+  }
+  if (isCustomReportModule(key)) {
+    const match = permissions.find((p) => p.moduleKey === key)
+    if (match?.name) {
+      return match.name
+    }
+    return 'Custom report'
   }
   return key
     .split('-')
@@ -126,18 +144,18 @@ export function PermissionMatrix({
         </thead>
         <tbody>
           {modules.map((moduleKey) => {
-            const isSubDashboard = isCustomDashboardModule(moduleKey)
+            const isSubModule = isCustomChildModule(moduleKey)
             return (
               <tr
                 key={moduleKey}
-                className={isSubDashboard ? 'bg-bg-secondary/30' : undefined}
+                className={isSubModule ? 'bg-bg-secondary/30' : undefined}
               >
                 <td
                   className={`border border-border py-2 font-medium text-text-primary ${
-                    isSubDashboard ? 'pl-8 pr-3 text-sm font-normal text-text-secondary' : 'px-3'
+                    isSubModule ? 'pl-8 pr-3 text-sm font-normal text-text-secondary' : 'px-3'
                   }`}
                 >
-                  {isSubDashboard && (
+                  {isSubModule && (
                     <span className="mr-1.5 text-text-secondary" aria-hidden="true">
                       ↳
                     </span>
@@ -185,8 +203,10 @@ export function PermissionMatrix({
         </tbody>
       </table>
       <p className="mt-2 text-xs text-text-secondary">
-        Click or drag across cells to select permissions. Custom dashboards listed under
-        Dashboard require both Dashboard view and the dashboard&apos;s own view permission.
+        Click or drag across cells to select permissions. Custom dashboards and reports require
+        both the parent view permission (e.g. Dashboard, Reports, Agents) and the item&apos;s own
+        view permission. Sidebar dashboards appear under their section (Agents, Balance, etc.);
+        other dashboards appear under Dashboard; catalog reports appear under Reports.
       </p>
     </div>
   )

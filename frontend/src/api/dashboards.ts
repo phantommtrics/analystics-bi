@@ -1,4 +1,6 @@
 import type { DashboardLayout } from '../lib/dashboardLayout'
+import type { ReportCategory } from '../lib/reportConstants'
+import type { SavedReportSummary } from './reports'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
 
@@ -31,6 +33,8 @@ export interface DashboardSummary {
   description: string | null
   widgetCount: number
   isPublished: boolean
+  showInSidebarMenu: boolean
+  sidebarCategory: ReportCategory | null
   publishedAt: string | null
   createdByUsername: string | null
   updatedAt: string
@@ -42,19 +46,33 @@ export interface DashboardDetail extends DashboardSummary {
 }
 
 export const dashboardsApi = {
-  list: (token: string, search?: string, options?: { accessibleOnly?: boolean }) => {
+  list: (
+    token: string,
+    search?: string,
+    options?: { accessibleOnly?: boolean; sidebarMenuOnly?: boolean },
+  ) => {
     const qs = new URLSearchParams()
     if (search) qs.set('search', search)
     if (options?.accessibleOnly) qs.set('accessibleOnly', 'true')
+    if (options?.sidebarMenuOnly) qs.set('sidebarMenuOnly', 'true')
     const query = qs.toString()
     return dashboardsFetch<DashboardSummary[]>(query ? `?${query}` : '', token)
   },
 
   get: (token: string, id: string) => dashboardsFetch<DashboardDetail>(`/${id}`, token),
 
+  getReports: (token: string, id: string) =>
+    dashboardsFetch<SavedReportSummary[]>(`/${id}/reports`, token),
+
   create: (
     token: string,
-    data: { name: string; description?: string | null; layout?: DashboardLayout },
+    data: {
+      name: string
+      description?: string | null
+      layout?: DashboardLayout
+      showInSidebarMenu?: boolean
+      sidebarCategory?: ReportCategory | null
+    },
   ) =>
     dashboardsFetch<DashboardDetail>('', token, {
       method: 'POST',
@@ -68,6 +86,8 @@ export const dashboardsApi = {
       name?: string
       description?: string | null
       layout?: DashboardLayout
+      showInSidebarMenu?: boolean
+      sidebarCategory?: ReportCategory | null
     },
   ) =>
     dashboardsFetch<DashboardDetail>(`/${id}`, token, {

@@ -17,9 +17,11 @@ import { Dashboard } from './pages/Dashboard'
 import { CustomDashboard } from './pages/CustomDashboard'
 import { DashboardBuilder } from './pages/DashboardBuilder'
 import { FinancialStatements } from './pages/FinancialStatements'
+import { Reconciliation } from './pages/Reconciliation'
 import { Remittance } from './pages/Remittance'
 import { ReportBuilder } from './pages/ReportBuilder'
 import { ReportCatalog } from './pages/ReportCatalog'
+import { ReportView } from './pages/ReportView'
 import { Schedules } from './pages/Schedules'
 import { SystemBalance } from './pages/SystemBalance'
 import { Login } from './pages/Login'
@@ -74,6 +76,14 @@ export function App() {
               }
             />
             <Route
+              path="/reports/view/:reportId"
+              element={
+                <RequirePermission moduleKey="reports">
+                  <ReportView />
+                </RequirePermission>
+              }
+            />
+            <Route
               path="/agents"
               element={
                 <RequirePermission moduleKey="agents">
@@ -118,6 +128,14 @@ export function App() {
               element={
                 <RequirePermission moduleKey="aml">
                   <AmlAlerts />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/reconciliation"
+              element={
+                <RequirePermission moduleKey="reconciliation">
+                  <Reconciliation />
                 </RequirePermission>
               }
             />

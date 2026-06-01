@@ -1,5 +1,10 @@
-import { UserType } from '@prisma/client'
+import { ReportCategory, UserType } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import {
+  SIDEBAR_CATEGORY_LABELS,
+  SIDEBAR_REPORT_CATEGORIES,
+} from './sidebarCategories.js'
+import { SIDEBAR_CATEGORY_SECTION_MODULE } from '../reports/sidebarCategories.js'
 
 export const CUSTOM_DASHBOARD_PREFIX = 'custom-dashboard-'
 
@@ -20,20 +25,42 @@ export function dashboardIdFromModuleKey(moduleKey: string): string | null {
   return moduleKey.slice(CUSTOM_DASHBOARD_PREFIX.length)
 }
 
-export async function syncDashboardPermissions(dashboardId: string, dashboardName: string) {
+export type DashboardPermissionMeta = {
+  name: string
+  showInSidebarMenu: boolean
+  sidebarCategory: ReportCategory | null
+}
+
+export function permissionDisplayName(meta: DashboardPermissionMeta): string {
+  if (
+    meta.showInSidebarMenu &&
+    meta.sidebarCategory &&
+    SIDEBAR_REPORT_CATEGORIES.has(meta.sidebarCategory)
+  ) {
+    const section = SIDEBAR_CATEGORY_LABELS[meta.sidebarCategory] ?? meta.sidebarCategory
+    return `${section} — ${meta.name}`
+  }
+  return meta.name
+}
+
+export async function syncDashboardPermissions(
+  dashboardId: string,
+  meta: DashboardPermissionMeta,
+) {
   const moduleKey = dashboardModuleKey(dashboardId)
+  const displayName = permissionDisplayName(meta)
   for (const actionKey of CUSTOM_DASHBOARD_ACTIONS) {
     await prisma.permission.upsert({
       where: { moduleKey_actionKey: { moduleKey, actionKey } },
       update: {
-        name: `${dashboardName}`,
-        description: `${actionKey} access for dashboard "${dashboardName}"`,
+        name: displayName,
+        description: `${actionKey} access for dashboard "${meta.name}"`,
       },
       create: {
         moduleKey,
         actionKey,
-        name: `${dashboardName}`,
-        description: `${actionKey} access for dashboard "${dashboardName}"`,
+        name: displayName,
+        description: `${actionKey} access for dashboard "${meta.name}"`,
       },
     })
   }
@@ -50,10 +77,10 @@ export async function removeDashboardPermissions(dashboardId: string) {
 export async function ensureAllDashboardPermissions() {
   const published = await prisma.dashboard.findMany({
     where: { deletedAt: null, isPublished: true },
-    select: { id: true, name: true },
+    select: { id: true, name: true, showInSidebarMenu: true, sidebarCategory: true },
   })
   for (const dashboard of published) {
-    await syncDashboardPermissions(dashboard.id, dashboard.name)
+    await syncDashboardPermissions(dashboard.id, dashboard)
   }
 
   const unpublished = await prisma.dashboard.findMany({
@@ -65,13 +92,37 @@ export async function ensureAllDashboardPermissions() {
   }
 }
 
-export async function listCustomDashboardModuleKeys(): Promise<string[]> {
+/** Published dashboards shown under the main Dashboard menu (not a sidebar section). */
+export async function listMainMenuDashboardModuleKeys(): Promise<string[]> {
   const dashboards = await prisma.dashboard.findMany({
-    where: { deletedAt: null, isPublished: true },
+    where: { deletedAt: null, isPublished: true, showInSidebarMenu: false },
     select: { id: true },
     orderBy: { name: 'asc' },
   })
   return dashboards.map((d) => dashboardModuleKey(d.id))
+}
+
+export async function listSidebarDashboardModulesBySection(): Promise<
+  Record<string, string[]>
+> {
+  const dashboards = await prisma.dashboard.findMany({
+    where: { deletedAt: null, isPublished: true, showInSidebarMenu: true },
+    select: { id: true, sidebarCategory: true },
+    orderBy: { name: 'asc' },
+  })
+
+  const grouped: Record<string, string[]> = {}
+  for (const dashboard of dashboards) {
+    if (!dashboard.sidebarCategory) continue
+    const sectionKey = SIDEBAR_CATEGORY_SECTION_MODULE[dashboard.sidebarCategory]
+    if (!sectionKey) continue
+    const moduleKey = dashboardModuleKey(dashboard.id)
+    if (!grouped[sectionKey]) {
+      grouped[sectionKey] = []
+    }
+    grouped[sectionKey].push(moduleKey)
+  }
+  return grouped
 }
 
 export function hasExplicitCustomDashboardView(
@@ -95,17 +146,32 @@ export function userCanViewDashboard(
   return hasExplicitCustomDashboardView(permissions, dashboardId)
 }
 
-export function buildPermissionModuleList(
-  staticModules: readonly string[],
-  customDashboardModules: string[],
+export function insertModulesAfter(
+  modules: readonly string[],
+  afterKey: string,
+  insert: string[],
 ): string[] {
-  const dashboardIdx = staticModules.indexOf('dashboard')
-  if (dashboardIdx === -1) {
-    return [...staticModules, ...customDashboardModules]
+  const idx = modules.indexOf(afterKey)
+  if (idx === -1) {
+    return [...modules, ...insert]
   }
   return [
-    ...staticModules.slice(0, dashboardIdx + 1),
-    ...customDashboardModules,
-    ...staticModules.slice(dashboardIdx + 1),
+    ...modules.slice(0, idx + 1),
+    ...insert,
+    ...modules.slice(idx + 1),
   ]
+}
+
+export function buildDashboardPermissionModuleList(
+  staticModules: readonly string[],
+  mainMenuDashboardModules: string[],
+  sidebarBySection: Record<string, string[]>,
+): string[] {
+  let modules = insertModulesAfter(staticModules, 'dashboard', mainMenuDashboardModules)
+  for (const sectionKey of Object.keys(sidebarBySection).sort()) {
+    if (modules.includes(sectionKey)) {
+      modules = insertModulesAfter(modules, sectionKey, sidebarBySection[sectionKey] ?? [])
+    }
+  }
+  return modules
 }

@@ -1,4 +1,4 @@
-import { Prisma, UserType } from '@prisma/client'
+import { Prisma, ReportCategory, UserType } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import {
   hasDashboardParentView,
@@ -10,10 +10,13 @@ import {
 import {
   type DashboardLayout,
   emptyDashboardLayout,
+  extractReportIdsFromLayout,
   isKpiWidget,
   isReportWidget,
   parseDashboardLayout,
 } from './layout.js'
+import { normalizeDashboardSidebarMenu } from './sidebarCategories.js'
+import { listSavedReportsByIds, type SavedReportListItem } from '../reports/service.js'
 
 const dashboardInclude = {
   createdBy: { select: { id: true, username: true, displayName: true } },
@@ -26,6 +29,8 @@ export type DashboardListItem = {
   description: string | null
   widgetCount: number
   isPublished: boolean
+  showInSidebarMenu: boolean
+  sidebarCategory: ReportCategory | null
   publishedAt: string | null
   createdByUsername: string | null
   updatedAt: string
@@ -51,6 +56,8 @@ function formatListItem(
     description: row.description,
     widgetCount: layout.widgets.length,
     isPublished: row.isPublished,
+    showInSidebarMenu: row.showInSidebarMenu,
+    sidebarCategory: row.sidebarCategory,
     publishedAt: row.publishedAt?.toISOString() ?? null,
     createdByUsername: authorName(row.createdBy),
     updatedAt: row.updatedAt.toISOString(),
@@ -151,6 +158,44 @@ export async function listAccessibleDashboards(
     .filter((dashboard) => hasExplicitCustomDashboardView(permissions, dashboard.id))
 }
 
+export async function listAccessibleSidebarDashboards(
+  permissions: string[],
+  userType?: UserType,
+): Promise<DashboardListItem[]> {
+  const dashboards = await listAccessibleDashboards(permissions, undefined, userType)
+  return dashboards.filter((dashboard) => dashboard.showInSidebarMenu)
+}
+
+export async function listDashboardReports(dashboardId: string): Promise<SavedReportListItem[]> {
+  const row = await prisma.dashboard.findFirst({
+    where: { id: dashboardId, deletedAt: null },
+    select: { layout: true },
+  })
+  if (!row) {
+    throw new Error('NOT_FOUND')
+  }
+
+  const layout = parseDashboardLayout(row.layout)
+  const reportIds = extractReportIdsFromLayout(layout)
+  return listSavedReportsByIds(reportIds)
+}
+
+export async function dashboardContainsReport(
+  dashboardId: string,
+  reportId: string,
+): Promise<boolean> {
+  const row = await prisma.dashboard.findFirst({
+    where: { id: dashboardId, deletedAt: null, isPublished: true },
+    select: { layout: true },
+  })
+  if (!row) {
+    return false
+  }
+
+  const layout = parseDashboardLayout(row.layout)
+  return extractReportIdsFromLayout(layout).includes(reportId)
+}
+
 export async function getDashboardById(id: string): Promise<DashboardDetail | null> {
   const row = await prisma.dashboard.findFirst({
     where: { id, deletedAt: null },
@@ -164,6 +209,8 @@ export type CreateDashboardInput = {
   name: string
   description?: string | null
   layout?: DashboardLayout
+  showInSidebarMenu?: boolean
+  sidebarCategory?: ReportCategory | null
   createdById?: string
 }
 
@@ -172,11 +219,18 @@ export async function createDashboard(input: CreateDashboardInput): Promise<Dash
   const layout = input.layout ?? emptyDashboardLayout()
   await validateReportIds(layout)
 
+  const sidebar = normalizeDashboardSidebarMenu(
+    input.showInSidebarMenu,
+    input.sidebarCategory,
+  )
+
   const row = await prisma.dashboard.create({
     data: {
       name: input.name,
       description: input.description ?? null,
       layout: layout as Prisma.InputJsonValue,
+      showInSidebarMenu: sidebar.showInSidebarMenu,
+      sidebarCategory: sidebar.sidebarCategory,
       isPublished: false,
       createdById: input.createdById,
       updatedById: input.createdById,
@@ -190,6 +244,8 @@ export type UpdateDashboardInput = {
   name?: string
   description?: string | null
   layout?: DashboardLayout
+  showInSidebarMenu?: boolean
+  sidebarCategory?: ReportCategory | null
   updatedById?: string
 }
 
@@ -212,18 +268,38 @@ export async function updateDashboard(
     await validateReportIds(input.layout)
   }
 
+  const nextSidebar =
+    input.showInSidebarMenu !== undefined || input.sidebarCategory !== undefined
+      ? normalizeDashboardSidebarMenu(
+          input.showInSidebarMenu ?? existing.showInSidebarMenu,
+          input.sidebarCategory !== undefined
+            ? input.sidebarCategory
+            : existing.sidebarCategory,
+        )
+      : null
+
   const row = await prisma.dashboard.update({
     where: { id },
     data: {
       name: input.name,
       description: input.description,
       ...(input.layout ? { layout: input.layout as Prisma.InputJsonValue } : {}),
+      ...(nextSidebar
+        ? {
+            showInSidebarMenu: nextSidebar.showInSidebarMenu,
+            sidebarCategory: nextSidebar.sidebarCategory,
+          }
+        : {}),
       updatedById: input.updatedById,
     },
     include: dashboardInclude,
   })
-  if (input.name && existing.isPublished) {
-    await syncDashboardPermissions(row.id, row.name)
+  if (existing.isPublished) {
+    await syncDashboardPermissions(row.id, {
+      name: row.name,
+      showInSidebarMenu: row.showInSidebarMenu,
+      sidebarCategory: row.sidebarCategory,
+    })
   }
   return formatDetail(row)
 }
@@ -256,7 +332,11 @@ export async function publishDashboard(
     },
     include: dashboardInclude,
   })
-  await syncDashboardPermissions(row.id, row.name)
+  await syncDashboardPermissions(row.id, {
+    name: row.name,
+    showInSidebarMenu: row.showInSidebarMenu,
+    sidebarCategory: row.sidebarCategory,
+  })
   return formatDetail(row)
 }
 

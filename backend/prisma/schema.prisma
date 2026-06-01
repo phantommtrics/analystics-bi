@@ -37,6 +37,13 @@ enum ReportCategory {
   COMPLIANCE
   AGENT
   GENERAL
+  AGENTS
+  BALANCE
+  CUSTOMERS
+  BANKS
+  REMITTANCE
+  AML
+  RECONCILIATION
 }
 
 enum ReportVisualization {
@@ -44,6 +51,13 @@ enum ReportVisualization {
   LINE_CHART
   PIE_CHART
   TABLE_ONLY
+}
+
+enum ReportScheduleStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
 }
 
 model User {
@@ -62,6 +76,7 @@ model User {
   dataSources        DataSource[]
   savedReports       SavedReport[]     @relation("ReportCreatedBy")
   updatedReports     SavedReport[]     @relation("ReportUpdatedBy")
+  reportSchedules    ReportSchedule[]  @relation("ScheduleCreatedBy")
   dashboards         Dashboard[]       @relation("DashboardCreatedBy")
   updatedDashboards  Dashboard[]       @relation("DashboardUpdatedBy")
   createdAt          DateTime          @default(now())
@@ -119,6 +134,7 @@ model UserGroup {
   roleId      String
   role        Role              @relation(fields: [roleId], references: [id], onDelete: Restrict)
   members     UserGroupMember[]
+  reportSchedules ReportSchedule[]
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
 }
@@ -172,27 +188,55 @@ model SavedReport {
   visualization ReportVisualization @default(BAR_CHART)
   dataSourceId  String
   dataSource    DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  isPublished        Boolean             @default(false)
+  showInSidebarMenu  Boolean             @default(false)
+  publishedAt        DateTime?
   createdById   String?
   createdBy     User?               @relation("ReportCreatedBy", fields: [createdById], references: [id])
   updatedById   String?
   updatedBy     User?               @relation("ReportUpdatedBy", fields: [updatedById], references: [id])
   deletedAt     DateTime?
   deletedById   String?
+  schedules     ReportSchedule[]
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
   @@index([deletedAt])
   @@index([name])
   @@index([category])
+  @@index([isPublished])
+  @@index([showInSidebarMenu])
+}
+
+model ReportSchedule {
+  id          String               @id @default(cuid())
+  reportId    String
+  report      SavedReport          @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  groupId     String
+  group       UserGroup            @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  scheduledAt DateTime
+  status      ReportScheduleStatus @default(ACTIVE)
+  lastSentAt  DateTime?
+  lastError   String?              @db.Text
+  createdById String?
+  createdBy   User?                @relation("ScheduleCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([status, scheduledAt])
+  @@index([reportId])
+  @@index([groupId])
 }
 
 model Dashboard {
-  id          String    @id @default(cuid())
-  name        String
-  description String?
-  layout      Json
-  isPublished Boolean   @default(false)
-  publishedAt DateTime?
+  id                String          @id @default(cuid())
+  name              String
+  description       String?
+  layout            Json
+  showInSidebarMenu Boolean         @default(false)
+  sidebarCategory   ReportCategory?
+  isPublished       Boolean         @default(false)
+  publishedAt       DateTime?
   createdById String?
   createdBy   User?     @relation("DashboardCreatedBy", fields: [createdById], references: [id])
   updatedById String?
@@ -205,4 +249,6 @@ model Dashboard {
   @@index([deletedAt])
   @@index([name])
   @@index([isPublished])
+  @@index([showInSidebarMenu])
+  @@index([sidebarCategory])
 }

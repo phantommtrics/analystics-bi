@@ -35,6 +35,8 @@ interface DashboardGridProps {
   /** Full-screen preview: larger canvas, no drop-zone chrome */
   previewMode?: boolean
   queryFilters?: Record<string, string>
+  /** When viewing a saved dashboard, pass id so widgets can execute embedded reports */
+  dashboardId?: string
 }
 
 type DragState = {
@@ -61,6 +63,7 @@ export function DashboardGrid({
   onChange,
   previewMode = false,
   queryFilters,
+  dashboardId,
 }: DashboardGridProps) {
   const gridRef = useRef<HTMLDivElement>(null)
   const layoutRef = useRef(layout)
@@ -273,6 +276,7 @@ export function DashboardGrid({
                       widget={widget}
                       canEdit={canEdit && !previewMode}
                       queryFilters={queryFilters}
+                      dashboardId={dashboardId}
                       onEdit={() => setEditingKpiId(widget.id)}
                       onRemove={() => removeWidget(widget.id)}
                       onDragHandleMouseDown={(e) => startWidgetDrag(widget, e)}
@@ -306,6 +310,7 @@ export function DashboardGrid({
                     visualization={visualization}
                     canEdit={canEdit && !previewMode}
                     queryFilters={queryFilters}
+                    dashboardId={dashboardId}
                     onVisualizationChange={(v) => patchWidget(widget.id, { visualization: v })}
                     onRemove={() => removeWidget(widget.id)}
                     onDragHandleMouseDown={(e) => startWidgetDrag(widget, e)}

@@ -20,6 +20,13 @@ const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1'),
   /** 32-byte key (base64) for encrypting external database credentials */
   DATASOURCE_ENCRYPTION_KEY: z.string().min(1),
+  /** How often the API checks for due report schedules (milliseconds) */
+  REPORT_SCHEDULE_POLL_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(5_000)
+    .max(86_400_000)
+    .default(60_000),
 })
 
 export const env = envSchema.parse(process.env)

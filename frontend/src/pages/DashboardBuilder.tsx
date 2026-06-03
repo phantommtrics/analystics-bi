@@ -24,7 +24,8 @@ import {
   type SidebarReportCategory,
 } from '../lib/reportConstants'
 import { useDashboardFilters } from '../hooks/useDashboardFilters'
-import { filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
+import { filtersToQueryRecord, formatFilterLabel, serializeQueryFilters } from '../lib/dashboardFilters'
+import { buildDashboardWidgetExportPermissions } from '../lib/widgetExport'
 
 const initialTab = createDashboardTab({ title: 'Dashboard 1' })
 
@@ -75,6 +76,24 @@ export function DashboardBuilder() {
 
   const layoutDirty = isDashboardTabDirty(activeTab)
   const activeDashboardId = activeTab.savedDashboardId
+
+  const getWidgetExportPermissions = useCallback(
+    (reportId: string) =>
+      buildDashboardWidgetExportPermissions(
+        hasPermission,
+        activeDashboardId ?? undefined,
+        reportId,
+      ),
+    [hasPermission, activeDashboardId],
+  )
+  const exportContext = useMemo(
+    () => ({
+      dashboardName: activeTab.name,
+      dashboardDescription: activeTab.description,
+      filterLabel: formatFilterLabel(filters),
+    }),
+    [activeTab.name, activeTab.description, filters],
+  )
 
   const openDashboardIds = useMemo(
     () =>
@@ -492,6 +511,10 @@ export function DashboardBuilder() {
               reportsById={reportsById}
               canEdit={canEdit}
               queryFilters={queryFilters}
+              dashboardId={activeDashboardId ?? undefined}
+              showWidgetExport
+              exportContext={exportContext}
+              getWidgetExportPermissions={getWidgetExportPermissions}
               onChange={setLayout}
             />
           </div>
@@ -534,6 +557,10 @@ export function DashboardBuilder() {
               onChange={setLayout}
               previewMode
               queryFilters={queryFilters}
+              dashboardId={activeDashboardId ?? undefined}
+              showWidgetExport
+              exportContext={exportContext}
+              getWidgetExportPermissions={getWidgetExportPermissions}
             />
           </div>
         </div>

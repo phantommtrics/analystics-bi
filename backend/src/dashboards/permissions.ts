@@ -5,6 +5,7 @@ import {
   SIDEBAR_REPORT_CATEGORIES,
 } from './sidebarCategories.js'
 import { SIDEBAR_CATEGORY_SECTION_MODULE } from '../reports/sidebarCategories.js'
+import { userCanExportReport } from '../reports/permissions.js'
 
 export const CUSTOM_DASHBOARD_PREFIX = 'custom-dashboard-'
 
@@ -144,6 +145,48 @@ export function userCanViewDashboard(
   if (!hasDashboardParentView(permissions)) return false
   if (userType === UserType.OWNER || permissions.includes('*')) return true
   return hasExplicitCustomDashboardView(permissions, dashboardId)
+}
+
+function hasDashboardParentExport(
+  permissions: string[],
+  action: 'export_pdf' | 'export_csv',
+): boolean {
+  return permissions.includes('*') || permissions.includes(`dashboard:${action}`)
+}
+
+function hasExplicitCustomDashboardExport(
+  permissions: string[],
+  dashboardId: string,
+  action: 'export_pdf' | 'export_csv',
+): boolean {
+  return permissions.includes(`${dashboardModuleKey(dashboardId)}:${action}`)
+}
+
+export function userCanExportDashboard(
+  permissions: string[],
+  dashboardId: string,
+  action: 'export_pdf' | 'export_csv',
+  userType?: UserType,
+): boolean {
+  if (!hasDashboardParentView(permissions)) return false
+  if (userType === UserType.OWNER || permissions.includes('*')) return true
+  return (
+    hasDashboardParentExport(permissions, action) &&
+    hasExplicitCustomDashboardExport(permissions, dashboardId, action)
+  )
+}
+
+export function userCanExportDashboardWidget(
+  permissions: string[],
+  dashboardId: string,
+  reportId: string,
+  action: 'export_pdf' | 'export_csv',
+  userType?: UserType,
+): boolean {
+  return (
+    userCanExportDashboard(permissions, dashboardId, action, userType) &&
+    userCanExportReport(permissions, reportId, action, userType)
+  )
 }
 
 export function insertModulesAfter(

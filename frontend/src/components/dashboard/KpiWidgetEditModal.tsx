@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { reportsApi, type SavedReportSummary } from '../../api/reports'
 import type { KpiWidgetLayout } from '../../lib/dashboardLayout'
 import {
-  extractKpiPairOptions,
+  fetchKpiPairOptions,
   pairOptionMatchesWidget,
   type KpiDataPairOption,
 } from '../../lib/kpiReportData'
@@ -32,6 +32,7 @@ interface KpiWidgetEditModalProps {
   reports: SavedReportSummary[]
   widget: KpiWidgetLayout | null
   queryFilters?: Record<string, string>
+  dashboardId?: string
   onConfirm: (patch: KpiWidgetEditPatch) => void
   onCancel: () => void
 }
@@ -42,6 +43,7 @@ export function KpiWidgetEditModal({
   reports,
   widget,
   queryFilters,
+  dashboardId,
   onConfirm,
   onCancel,
 }: KpiWidgetEditModalProps) {
@@ -59,6 +61,7 @@ export function KpiWidgetEditModal({
   const [pairs, setPairs] = useState<KpiDataPairOption[]>([])
   const [pairsLoading, setPairsLoading] = useState(false)
   const [pairsError, setPairsError] = useState('')
+  const [pairsUsePreview, setPairsUsePreview] = useState(false)
   const [useReportData, setUseReportData] = useState(false)
 
   useEffect(() => {
@@ -76,24 +79,39 @@ export function KpiWidgetEditModal({
   }, [widget])
 
   const loadPairs = useCallback(
-    async (reportId: string) => {
-      if (!accessToken || !reportId || queryFilters === undefined) {
+    async (reportId: string, signal: { cancelled: boolean }) => {
+      if (!accessToken || !reportId) {
         setPairs([])
+        return
+      }
+      if (queryFilters === undefined) {
+        setPairs([])
+        setPairsError('')
+        setPairsLoading(false)
         return
       }
       setPairsLoading(true)
       setPairsError('')
+      setPairsUsePreview(false)
       try {
-        const result = await reportsApi.execute(accessToken, reportId, queryFilters)
-        setPairs(extractKpiPairOptions(result))
+        const executeOpts = dashboardId ? { dashboardId } : undefined
+        const { options, usedPreviewFilters } = await fetchKpiPairOptions(
+          (filters) => reportsApi.execute(accessToken, reportId, filters, executeOpts),
+          queryFilters,
+        )
+        if (signal.cancelled) return
+        setPairs(options)
+        setPairsUsePreview(usedPreviewFilters)
       } catch (err) {
+        if (signal.cancelled) return
         setPairs([])
+        setPairsUsePreview(false)
         setPairsError(err instanceof Error ? err.message : 'Failed to load report data')
       } finally {
-        setPairsLoading(false)
+        if (!signal.cancelled) setPairsLoading(false)
       }
     },
-    [accessToken, queryFilters],
+    [accessToken, queryFilters, dashboardId],
   )
 
   useEffect(() => {
@@ -101,8 +119,29 @@ export function KpiWidgetEditModal({
       setPairs([])
       return
     }
-    void loadPairs(savedReportId)
-  }, [open, useReportData, savedReportId, loadPairs, queryFilters])
+    const signal = { cancelled: false }
+    void loadPairs(savedReportId, signal)
+    return () => {
+      signal.cancelled = true
+    }
+  }, [open, useReportData, savedReportId, loadPairs])
+
+  useEffect(() => {
+    if (!useReportData || pairs.length === 0) return
+    const column = valueColumn ?? labelColumn
+    if (!column) return
+    const match = pairs.find((p) =>
+      pairOptionMatchesWidget(p, {
+        savedReportId: savedReportId || undefined,
+        labelColumn: column,
+        valueColumn: column,
+        rowIndex,
+      }),
+    )
+    if (match && match.value !== '—') {
+      setValue(match.value)
+    }
+  }, [pairs, useReportData, valueColumn, labelColumn, rowIndex, savedReportId])
 
   const selectedPairId = useMemo(() => {
     const column = valueColumn ?? labelColumn
@@ -149,13 +188,14 @@ export function KpiWidgetEditModal({
       backgroundColor: normalizeHexColor(backgroundColor, widget.backgroundColor),
       textColor: normalizeHexColor(textColor, widget.textColor),
     }
-    if (useReportData && savedReportId && labelColumn && valueColumn) {
+    if (useReportData && savedReportId && (valueColumn ?? labelColumn)) {
+      const column = valueColumn ?? labelColumn!
       patch.savedReportId = savedReportId
-      patch.labelColumn = valueColumn
-      patch.valueColumn = valueColumn
+      patch.labelColumn = column
+      patch.valueColumn = column
       patch.rowIndex = rowIndex ?? 0
-      patch.label = valueColumn
-      patch.value = value.trim()
+      patch.label = column
+      patch.value = value.trim() || '—'
     } else {
       patch.savedReportId = undefined
       patch.labelColumn = undefined
@@ -192,9 +232,11 @@ export function KpiWidgetEditModal({
             className="rounded-md p-4 shadow-sm"
             style={{ backgroundColor, color: textColor }}
           >
-            <i className={`${iconClassName(icon)} mb-2 block text-2xl`}></i>
-            <div className="text-xl font-semibold">{value || '—'}</div>
-            <div className="text-sm opacity-85">{label || 'Label'}</div>
+            <i className={`${iconClassName(icon)} text-[22px] opacity-90`}></i>
+            <div className="mt-3">
+              <div className="mb-1 text-kpi font-medium leading-none">{value || '—'}</div>
+              <div className="text-sm opacity-85">{label || 'Label'}</div>
+            </div>
             {savedReportId && labelColumn && (
               <p className="mt-2 text-[10px] opacity-70">
                 Live data from saved report
@@ -277,7 +319,21 @@ export function KpiWidgetEditModal({
                   )}
                   {!pairsLoading && !pairsError && pairs.length === 0 && (
                     <p className="text-xs text-text-secondary">
-                      No rows returned. Run the report in Report Builder first.
+                      {queryFilters === undefined
+                        ? 'Select a date filter on the dashboard to load report data for this KPI.'
+                        : 'No columns returned. Run the report in Report Builder first.'}
+                    </p>
+                  )}
+                  {pairsUsePreview && (
+                    <p className="mb-2 text-xs text-text-secondary">
+                      Sample values from the last 365 days — the live KPI still uses the dashboard
+                      date filter.
+                    </p>
+                  )}
+                  {!pairsLoading && pairs.length > 0 && pairs.every((p) => p.value === '—') && (
+                    <p className="mb-2 text-xs text-text-secondary">
+                      No data returned for this report — pick a column below; the value will update
+                      when data is available.
                     </p>
                   )}
                   {!pairsLoading && pairs.length > 0 && (

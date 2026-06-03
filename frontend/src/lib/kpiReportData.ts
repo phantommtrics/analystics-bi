@@ -1,4 +1,9 @@
 import type { QueryExecuteResult } from '../api/reportBuilder'
+import {
+  filtersToQueryRecord,
+  filtersWithPreset,
+  serializeQueryFilters,
+} from './dashboardFilters'
 
 export type KpiDataPairOption = {
   id: string
@@ -9,12 +14,29 @@ export type KpiDataPairOption = {
   valueColumn: string
 }
 
+/** Broader range used only when picking KPI columns in the builder. */
+export function buildKpiPreviewFilters(): Record<string, string> {
+  return filtersToQueryRecord(filtersWithPreset('last-365-days')) ?? {}
+}
+
+export function getRowCell(row: Record<string, unknown>, column: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(row, column)) {
+    return row[column]
+  }
+  const key = Object.keys(row).find((k) => k.toLowerCase() === column.toLowerCase())
+  return key !== undefined ? row[key] : undefined
+}
+
 export function formatKpiCell(value: unknown): string {
   if (value === null || value === undefined) return '—'
   if (typeof value === 'number') {
-    return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    const text = Number.isInteger(value)
+      ? String(value)
+      : value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+    return text === '' ? '—' : text
   }
-  return String(value)
+  const text = String(value)
+  return text === '' ? '—' : text
 }
 
 function optionLabel(column: string, rowIndex: number, rowCount: number): string {
@@ -25,7 +47,18 @@ function optionLabel(column: string, rowIndex: number, rowCount: number): string
 /** Build selectable label/value pairs: column name → cell value for each column and row. */
 export function extractKpiPairOptions(result: QueryExecuteResult): KpiDataPairOption[] {
   const { columns, rows } = result
-  if (columns.length === 0 || rows.length === 0) return []
+  if (columns.length === 0) return []
+
+  if (rows.length === 0) {
+    return columns.map((column) => ({
+      id: `col-${column}`,
+      label: column,
+      value: '—',
+      rowIndex: 0,
+      labelColumn: column,
+      valueColumn: column,
+    }))
+  }
 
   const options: KpiDataPairOption[] = []
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
@@ -34,7 +67,7 @@ export function extractKpiPairOptions(result: QueryExecuteResult): KpiDataPairOp
       options.push({
         id: `row-${rowIndex}-col-${column}`,
         label: optionLabel(column, rowIndex, rows.length),
-        value: formatKpiCell(row[column]),
+        value: formatKpiCell(getRowCell(row, column)),
         rowIndex,
         labelColumn: column,
         valueColumn: column,
@@ -42,6 +75,46 @@ export function extractKpiPairOptions(result: QueryExecuteResult): KpiDataPairOp
     }
   }
   return options
+}
+
+export async function fetchKpiPairOptions(
+  execute: (filters: Record<string, string>) => Promise<QueryExecuteResult>,
+  dashboardFilters: Record<string, string>,
+): Promise<{ options: KpiDataPairOption[]; usedPreviewFilters: boolean }> {
+  const filterAttempts: Record<string, string>[] = [dashboardFilters]
+  const previewFilters = buildKpiPreviewFilters()
+  if (serializeQueryFilters(previewFilters) !== serializeQueryFilters(dashboardFilters)) {
+    filterAttempts.push(previewFilters)
+  }
+  if (!filterAttempts.some((f) => serializeQueryFilters(f) === serializeQueryFilters({}))) {
+    filterAttempts.push({})
+  }
+
+  let columnsResult: QueryExecuteResult | null = null
+
+  for (const filters of filterAttempts) {
+    try {
+      const result = await execute(filters)
+      if (result.rows.length > 0) {
+        return {
+          options: extractKpiPairOptions(result),
+          usedPreviewFilters: serializeQueryFilters(filters) !== serializeQueryFilters(dashboardFilters),
+        }
+      }
+      if (result.columns.length > 0) {
+        columnsResult = result
+      }
+    } catch {
+      // try next filter set
+    }
+  }
+
+  return {
+    options: extractKpiPairOptions(
+      columnsResult ?? { columns: [], rows: [], rowCount: 0, latencyMs: 0, truncated: false },
+    ),
+    usedPreviewFilters: false,
+  }
 }
 
 export type KpiReportBinding = {
@@ -58,19 +131,27 @@ export function resolveKpiDisplay(
   result: QueryExecuteResult | null,
 ): { label: string; value: string } {
   const column = widget.valueColumn ?? widget.labelColumn
-  if (!result || !widget.savedReportId || !column) {
+  if (!widget.savedReportId || !column) {
     return { label: widget.label, value: widget.value }
   }
 
+  if (!result) {
+    return { label: column, value: widget.value }
+  }
+
+  if (result.rows.length === 0) {
+    return { label: column, value: '—' }
+  }
+
   const rowIndex = widget.rowIndex ?? 0
-  const row = result.rows[rowIndex]
+  const row = result.rows[rowIndex] ?? result.rows[0]
   if (!row) {
-    return { label: widget.label, value: widget.value }
+    return { label: column, value: '—' }
   }
 
   return {
     label: column,
-    value: formatKpiCell(row[column]),
+    value: formatKpiCell(getRowCell(row, column)),
   }
 }
 

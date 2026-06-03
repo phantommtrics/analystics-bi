@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { EChartBase } from './EChartBase'
+import { forwardRef, useMemo } from 'react'
+import { EChartBase, type EChartHandle } from './EChartBase'
 
 interface LineChartProps {
   data: {
@@ -14,12 +14,10 @@ interface LineChartProps {
   area?: boolean
 }
 
-export function LineChart({
-  data,
-  height = 300,
-  smooth = true,
-  area = false,
-}: LineChartProps) {
+export const LineChart = forwardRef<EChartHandle, LineChartProps>(function LineChart(
+  { data, height = 300, smooth = true, area = false },
+  ref,
+) {
   const option = useMemo(() => {
     const colors = [
       '#2E6DB4',
@@ -124,5 +122,5 @@ export function LineChart({
     }
   }, [data, smooth, area])
 
-  return <EChartBase option={option} height={height} />
-}
+  return <EChartBase ref={ref} option={option} height={height} />
+})

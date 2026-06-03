@@ -204,9 +204,9 @@ export function PermissionMatrix({
       </table>
       <p className="mt-2 text-xs text-text-secondary">
         Click or drag across cells to select permissions. Custom dashboards and reports require
-        both the parent view permission (e.g. Dashboard, Reports, Agents) and the item&apos;s own
-        view permission. Sidebar dashboards appear under their section (Agents, Balance, etc.);
-        other dashboards appear under Dashboard; catalog reports appear under Reports.
+        both the parent permission (Dashboard or Reports) and the item&apos;s own permission for
+        view and export (PDF/CSV). Dashboard widget exports require dashboard and report export
+        permissions. Sidebar dashboards appear under their section; catalog reports under Reports.
       </p>
     </div>
   )

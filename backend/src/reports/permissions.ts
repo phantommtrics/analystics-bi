@@ -132,3 +132,32 @@ export function userCanViewReport(
   if (userType === UserType.OWNER || permissions.includes('*')) return true
   return hasExplicitCustomReportView(permissions, reportId)
 }
+
+function hasReportsParentExport(
+  permissions: string[],
+  action: 'export_pdf' | 'export_csv',
+): boolean {
+  return permissions.includes('*') || permissions.includes(`reports:${action}`)
+}
+
+function hasExplicitCustomReportExport(
+  permissions: string[],
+  reportId: string,
+  action: 'export_pdf' | 'export_csv',
+): boolean {
+  return permissions.includes(`${reportModuleKey(reportId)}:${action}`)
+}
+
+export function userCanExportReport(
+  permissions: string[],
+  reportId: string,
+  action: 'export_pdf' | 'export_csv',
+  userType?: UserType,
+): boolean {
+  if (!hasReportsParentView(permissions)) return false
+  if (userType === UserType.OWNER || permissions.includes('*')) return true
+  return (
+    hasReportsParentExport(permissions, action) &&
+    hasExplicitCustomReportExport(permissions, reportId, action)
+  )
+}

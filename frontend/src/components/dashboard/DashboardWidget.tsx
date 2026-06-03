@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { reportsApi } from '../../api/reports'
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import type { SavedReportSummary } from '../../api/reports'
@@ -9,10 +9,21 @@ import {
 } from '../../lib/reportConstants'
 import { rowsToChartData, rowsToPieData } from '../../lib/queryResultChart'
 import { serializeQueryFilters } from '../../lib/dashboardFilters'
+import {
+  isChartVisualization,
+  runWidgetExport,
+  type WidgetExportContext,
+  type WidgetExportFormat,
+  type WidgetExportPermissions,
+} from '../../lib/widgetExport'
 import { ReportChartPreview } from '../report/ReportChartPreview'
 import { ChartPreviewSkeleton } from '../report/ChartPreviewSkeleton'
 import { QueryResultsTable } from '../report/QueryResultsTable'
 import { COMPACT_QUERY_TABLE_PAGE_SIZE } from '../../lib/queryResultTable'
+import type { EChartHandle } from '../charts/EChartBase'
+import {
+  WidgetExportMenu,
+} from './WidgetExportMenu'
 
 interface DashboardWidgetProps {
   accessToken: string
@@ -21,6 +32,9 @@ interface DashboardWidgetProps {
   canEdit: boolean
   queryFilters?: Record<string, string>
   dashboardId?: string
+  showExport?: boolean
+  exportContext?: WidgetExportContext
+  exportPermissions?: WidgetExportPermissions
   onVisualizationChange?: (v: ReportVisualization) => void
   onRemove: () => void
   /** Mousedown on grip starts canvas reposition drag */
@@ -35,6 +49,9 @@ export function DashboardWidget({
   canEdit,
   queryFilters,
   dashboardId,
+  showExport = false,
+  exportContext,
+  exportPermissions = { png: true, csv: true, pdf: true, xlsx: true },
   onVisualizationChange,
   onRemove,
   onDragHandleMouseDown,
@@ -43,6 +60,8 @@ export function DashboardWidget({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<QueryExecuteResult | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const chartRef = useRef<EChartHandle>(null)
 
   const filterKey = serializeQueryFilters(queryFilters)
 
@@ -93,6 +112,32 @@ export function DashboardWidget({
     queryFilters !== undefined &&
     (loading || (result !== null && result.rows.length > 0))
 
+  const canExportWidget =
+    showExport &&
+    queryFilters !== undefined &&
+    !loading &&
+    !error &&
+    result !== null &&
+    (isChartVisualization(visualization)
+      ? chartData.series.length > 0 || pieData.length > 0
+      : result.rows.length > 0)
+
+  const handleExport = async (format: WidgetExportFormat) => {
+    if (!result) return
+    setExportError(null)
+
+    try {
+      await runWidgetExport(format, exportPermissions, {
+        result,
+        reportName: report.name,
+        exportContext,
+        getChartDataUrl: () => chartRef.current?.getDataUrl() ?? null,
+      })
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed')
+    }
+  }
+
   return (
     <div
       className={`flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-border bg-bg-primary shadow-sm ${
@@ -131,6 +176,13 @@ export function DashboardWidget({
             ))}
           </div>
         )}
+        {canExportWidget && (
+          <WidgetExportMenu
+            visualization={visualization}
+            permissions={exportPermissions}
+            onExport={handleExport}
+          />
+        )}
         {canEdit && (
           <button
             type="button"
@@ -165,12 +217,16 @@ export function DashboardWidget({
             {showChart && result && (
               <div className="mb-2">
                 <ReportChartPreview
+                  ref={chartRef}
                   visualization={visualization}
                   chartData={chartData}
                   pieData={pieData}
                   height={120}
                 />
               </div>
+            )}
+            {exportError && (
+              <p className="mb-2 text-center text-xs text-semantic-red">{exportError}</p>
             )}
             {showTable && (
               <QueryResultsTable

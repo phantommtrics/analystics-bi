@@ -29,13 +29,12 @@ export function DashboardKpiWidget({
   onDragHandleMouseDown,
   isDragging = false,
 }: DashboardKpiWidgetProps) {
-  const [loading, setLoading] = useState(false)
+  const linked = Boolean(widget.savedReportId) && Boolean(widget.valueColumn ?? widget.labelColumn)
+  const filterKey = serializeQueryFilters(queryFilters)
+
+  const [loading, setLoading] = useState(() => linked && queryFilters !== undefined)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<QueryExecuteResult | null>(null)
-
-  const linked = Boolean(widget.savedReportId) && Boolean(widget.valueColumn ?? widget.labelColumn)
-
-  const filterKey = serializeQueryFilters(queryFilters)
 
   useEffect(() => {
     if (!linked || !widget.savedReportId) {
@@ -55,6 +54,7 @@ export function DashboardKpiWidget({
     let cancelled = false
     setLoading(true)
     setError(null)
+    setResult(null)
     reportsApi
       .execute(accessToken, widget.savedReportId, queryFilters, { dashboardId })
       .then((data) => {
@@ -82,9 +82,35 @@ export function DashboardKpiWidget({
     widget.rowIndex,
     filterKey,
     dashboardId,
+    queryFilters,
   ])
 
   const display = resolveKpiDisplay(widget, result)
+
+  const bodyContent =
+    linked && queryFilters === undefined ? (
+      <p className="text-center text-sm opacity-80">Select a date filter to load</p>
+    ) : loading && linked ? (
+      <p className="text-center text-sm opacity-80">Loading...</p>
+    ) : error && linked ? (
+      <div className="text-center">
+        <p className="text-sm opacity-90">{error}</p>
+        <div className="mt-3">
+          <div className="mb-1 truncate text-kpi font-medium leading-none">{display.value}</div>
+          <div className="line-clamp-2 text-sm opacity-85">{display.label}</div>
+        </div>
+      </div>
+    ) : (
+      <>
+        <div className="flex items-start justify-between">
+          <i className={`${iconClassName(widget.icon)} text-[22px] opacity-90`}></i>
+        </div>
+        <div>
+          <div className="mb-1 truncate text-kpi font-medium leading-none">{display.value}</div>
+          <div className="line-clamp-2 text-sm opacity-85">{display.label}</div>
+        </div>
+      </>
+    )
 
   return (
     <div
@@ -96,36 +122,36 @@ export function DashboardKpiWidget({
         color: widget.textColor,
       }}
     >
-      <div
-        className="flex shrink-0 items-center gap-1 px-2 py-1.5"
-        style={{ borderBottom: `1px solid ${widget.textColor}22` }}
-      >
-        {canEdit && onDragHandleMouseDown && (
-          <button
-            type="button"
-            title="Drag to move"
-            onMouseDown={onDragHandleMouseDown}
-            className="shrink-0 cursor-grab rounded p-0.5 opacity-70 hover:opacity-100 active:cursor-grabbing"
-            style={{ color: widget.textColor }}
-          >
-            <i className="ti ti-grip-vertical text-sm"></i>
-          </button>
-        )}
-        <span className="min-w-0 flex-1 truncate text-[10px] font-medium uppercase tracking-wide opacity-80">
-          KPI{linked ? ' · Live' : ''}
-        </span>
-        {canEdit && onEdit && (
-          <button
-            type="button"
-            title="Edit KPI"
-            onClick={onEdit}
-            className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
-            style={{ color: widget.textColor }}
-          >
-            <i className="ti ti-pencil text-sm"></i>
-          </button>
-        )}
-        {canEdit && (
+      {canEdit && (
+        <div
+          className="flex shrink-0 items-center gap-1 px-2 py-1.5"
+          style={{ borderBottom: `1px solid ${widget.textColor}22` }}
+        >
+          {onDragHandleMouseDown && (
+            <button
+              type="button"
+              title="Drag to move"
+              onMouseDown={onDragHandleMouseDown}
+              className="shrink-0 cursor-grab rounded p-0.5 opacity-70 hover:opacity-100 active:cursor-grabbing"
+              style={{ color: widget.textColor }}
+            >
+              <i className="ti ti-grip-vertical text-sm"></i>
+            </button>
+          )}
+          <span className="min-w-0 flex-1 truncate text-[10px] font-medium uppercase tracking-wide opacity-80">
+            KPI{linked ? ' · Live' : ''}
+          </span>
+          {onEdit && (
+            <button
+              type="button"
+              title="Edit KPI"
+              onClick={onEdit}
+              className="shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+              style={{ color: widget.textColor }}
+            >
+              <i className="ti ti-pencil text-sm"></i>
+            </button>
+          )}
           <button
             type="button"
             title="Remove KPI"
@@ -135,28 +161,10 @@ export function DashboardKpiWidget({
           >
             <i className="ti ti-x text-sm"></i>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="flex min-h-0 flex-1 flex-col justify-center gap-2 p-3">
-        {linked && queryFilters === undefined ? (
-          <p className="text-center text-xs opacity-80">Select a date filter to load</p>
-        ) : loading && linked ? (
-          <p className="text-center text-xs opacity-80">Loading...</p>
-        ) : error && linked ? (
-          <div className="text-center text-xs opacity-90">
-            <p>{error}</p>
-            <p className="mt-2 truncate text-lg font-semibold">{display.value}</p>
-            <p className="text-sm opacity-85">{display.label}</p>
-          </div>
-        ) : (
-          <>
-            <i className={`${iconClassName(widget.icon)} text-2xl opacity-90`}></i>
-            <div className="truncate text-xl font-semibold leading-tight">{display.value}</div>
-            <div className="line-clamp-2 text-sm opacity-85">{display.label}</div>
-          </>
-        )}
-      </div>
+      <div className="flex min-h-0 flex-1 flex-col justify-center gap-3 p-4">{bodyContent}</div>
     </div>
   )
 }

@@ -26,6 +26,9 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     req.authUser = {
       id: user.id,
       userType: user.userType,
+      username: user.username,
+      email: user.email,
+      displayName: user.displayName,
       permissions,
       mustChangePassword: user.mustChangePassword,
     }

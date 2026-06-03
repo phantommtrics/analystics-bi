@@ -206,7 +206,7 @@ export function Schedules() {
             <CardTitle>Scheduled reports</CardTitle>
             <p className="mt-1 text-sm text-text-secondary">
               Send report links by email on a one-time or recurring basis (daily, weekly, or
-              monthly). PDF and CSV attachments are planned for a future release.
+              monthly). 
             </p>
           </CardHeader>
           {loading ? (

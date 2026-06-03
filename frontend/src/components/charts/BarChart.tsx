@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { EChartBase } from './EChartBase'
+import { forwardRef, useMemo } from 'react'
+import { EChartBase, type EChartHandle } from './EChartBase'
 
 interface BarChartProps {
   data: {
@@ -13,11 +13,10 @@ interface BarChartProps {
   stacked?: boolean
 }
 
-export function BarChart({
-  data,
-  height = 300,
-  stacked = false,
-}: BarChartProps) {
+export const BarChart = forwardRef<EChartHandle, BarChartProps>(function BarChart(
+  { data, height = 300, stacked = false },
+  ref,
+) {
   const option = useMemo(() => {
     const colors = [
       '#2E6DB4',
@@ -116,5 +115,5 @@ export function BarChart({
     }
   }, [data, stacked])
 
-  return <EChartBase option={option} height={height} />
-}
+  return <EChartBase ref={ref} option={option} height={height} />
+})

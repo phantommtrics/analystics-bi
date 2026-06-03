@@ -19,6 +19,8 @@
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "jspdf": "^3.0.1",
+    "jspdf-autotable": "^5.0.2",
     "jsonwebtoken": "latest",
     "pg": "^8.21.0",
     "resend": "^6.12.4",

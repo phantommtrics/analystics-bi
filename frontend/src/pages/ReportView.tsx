@@ -7,9 +7,14 @@ import { TopBar } from '../components/layout/TopBar'
 import { ReportRunDisplay } from '../components/report/ReportRunDisplay'
 import { ReportVariablesPanel } from '../components/report/ReportVariablesPanel'
 import { useReportVariables } from '../hooks/useReportVariables'
+import { formatFilterLabel } from '../lib/dashboardFilters'
 import { categoryMeta } from '../lib/reportConstants'
 import { canViewCustomReport } from '../lib/reportFilters'
 import { isDateVariable } from '../lib/sqlVariables'
+import {
+  buildReportExportPermissions,
+  hasAnyExportPermission,
+} from '../lib/widgetExport'
 
 export function ReportView() {
   const { reportId } = useParams<{ reportId: string }>()
@@ -46,6 +51,19 @@ export function ReportView() {
   )
 
   const dateFilterPending = hasDateVariables && !dateFiltersEnabled
+
+  const exportPermissions = useMemo(() => {
+    const perms = buildReportExportPermissions(hasPermission, reportId)
+    return { png: false, csv: perms.csv, pdf: perms.pdf, xlsx: perms.xlsx }
+  }, [hasPermission, reportId])
+  const showExport = hasAnyExportPermission(exportPermissions)
+  const exportContext = useMemo(
+    () => ({
+      reportDescription: report?.description ?? undefined,
+      filterLabel: hasDateVariables ? formatFilterLabel(dateFilters) : undefined,
+    }),
+    [report?.description, hasDateVariables, dateFilters],
+  )
 
   const loadReport = useCallback(async () => {
     if (!accessToken || !reportId) return
@@ -177,11 +195,16 @@ export function ReportView() {
           )}
 
           <ReportRunDisplay
-            visualization="TABLE_ONLY"
+            reportName={report.name}
+            visualization={report.visualization}
+            tableOnly
             queryResult={queryResult}
             queryError={queryError}
             isRunning={isRunning}
             dateFilterPending={dateFilterPending}
+            showExport={showExport}
+            exportContext={exportContext}
+            exportPermissions={exportPermissions}
           />
         </>
       )}

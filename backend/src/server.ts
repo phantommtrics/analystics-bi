@@ -8,9 +8,13 @@ import { reportBuilderRouter } from './routes/report-builder.js'
 import { reportsRouter } from './routes/reports.js'
 import { dashboardsRouter } from './routes/dashboards.js'
 import { schedulesRouter } from './routes/schedules.js'
+import { auditLogsRouter } from './routes/audit-logs.js'
+import { auditLogMiddleware } from './middleware/auditLog.js'
 import { startReportScheduleProcessor } from './schedules/processor.js'
 
 const app = express()
+
+app.set('trust proxy', true)
 
 app.use(
   cors({
@@ -18,6 +22,7 @@ app.use(
   }),
 )
 app.use(express.json())
+app.use(auditLogMiddleware)
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
@@ -29,6 +34,7 @@ app.use('/api/report-builder', reportBuilderRouter)
 app.use('/api/reports', reportsRouter)
 app.use('/api/dashboards', dashboardsRouter)
 app.use('/api/schedules', schedulesRouter)
+app.use('/api/audit-logs', auditLogsRouter)
 app.use('/api', protectedRouter)
 
 app.listen(env.PORT, () => {

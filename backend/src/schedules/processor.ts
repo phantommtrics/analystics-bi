@@ -1,6 +1,8 @@
 import { ReportScheduleRecurrence, ReportScheduleStatus } from '@prisma/client'
+import { recordAuditEvent } from '../audit/service.js'
 import { env } from '../env.js'
-import { sendReportScheduleEmail } from '../mail/reportSchedule.js'
+import { sendReportScheduleEmail, type ReportScheduleAttachment } from '../mail/reportSchedule.js'
+import { runScheduledReport } from './runReport.js'
 import { prisma } from '../prisma.js'
 import { isRecurring } from './recurrence.js'
 import { getGroupRecipientEmails, scheduleNextRunAfterDelivery } from './service.js'
@@ -38,7 +40,15 @@ export async function processDueReportSchedules() {
         scheduledAt: { lte: new Date() },
       },
       include: {
-        report: { select: { id: true, name: true, deletedAt: true, isPublished: true } },
+        report: {
+          select: {
+            id: true,
+            name: true,
+            deletedAt: true,
+            isPublished: true,
+            dataSource: { select: { isActive: true } },
+          },
+        },
         group: { select: { id: true, name: true } },
       },
     })
@@ -61,7 +71,13 @@ async function deliverSchedule(schedule: {
   dayOfWeek: number | null
   dayOfMonth: number | null
   timezoneOffsetMinutes: number
-  report: { id: string; name: string; deletedAt: Date | null; isPublished: boolean }
+  report: {
+    id: string
+    name: string
+    deletedAt: Date | null
+    isPublished: boolean
+    dataSource: { isActive: boolean }
+  }
   group: { id: string; name: string }
 }) {
   if (schedule.report.deletedAt || !schedule.report.isPublished) {
@@ -87,6 +103,43 @@ async function deliverSchedule(schedule: {
     return
   }
 
+  if (!schedule.report.dataSource.isActive) {
+    await prisma.reportSchedule.update({
+      where: { id: schedule.id },
+      data: {
+        status: ReportScheduleStatus.FAILED,
+        lastError: 'Report data source is inactive',
+      },
+    })
+    return
+  }
+
+  let attachments: ReportScheduleAttachment[]
+  let filterLabel: string
+  try {
+    const bundle = await runScheduledReport(schedule.report.id, {
+      scheduledAt: schedule.scheduledAt,
+      timezoneOffsetMinutes: schedule.timezoneOffsetMinutes,
+      recurrence: schedule.recurrence,
+    })
+    filterLabel = bundle.filterLabel
+    attachments = bundle.attachments.map((file) => ({
+      filename: file.filename,
+      content: file.content,
+    }))
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Failed to generate report exports'
+    await prisma.reportSchedule.update({
+      where: { id: schedule.id },
+      data: {
+        status: ReportScheduleStatus.FAILED,
+        lastError: message,
+      },
+    })
+    return
+  }
+
   const reportUrl = `${env.APP_PUBLIC_URL}/reports/view/${encodeURIComponent(schedule.report.id)}`
   const failures: string[] = []
   let sentCount = 0
@@ -98,6 +151,8 @@ async function deliverSchedule(schedule: {
       groupName: schedule.group.name,
       scheduledAt: schedule.scheduledAt,
       reportUrl,
+      filterLabel,
+      attachments,
     })
     if (result.ok) {
       sentCount += 1
@@ -119,6 +174,18 @@ async function deliverSchedule(schedule: {
 
   const now = new Date()
   const lastError = failures.length > 0 ? failures.join('; ') : null
+
+  void recordAuditEvent({
+    userLabel: 'System',
+    action: 'RUN_SCHEDULE',
+    resource: schedule.report.name,
+    ipAddress: 'localhost',
+    metadata: {
+      scheduleId: schedule.id,
+      groupName: schedule.group.name,
+      recipientCount: sentCount,
+    },
+  })
 
   if (isRecurring(schedule.recurrence)) {
     const nextRun = scheduleNextRunAfterDelivery(schedule)

@@ -6,8 +6,9 @@ import { dashboardsApi, type DashboardDetail } from '../api/dashboards'
 import { type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import { useDashboardFilters } from '../hooks/useDashboardFilters'
-import { canViewCustomDashboard, dashboardModuleKey, filtersToQueryRecord, serializeQueryFilters } from '../lib/dashboardFilters'
+import { canViewCustomDashboard, filtersToQueryRecord, formatFilterLabel, serializeQueryFilters } from '../lib/dashboardFilters'
 import type { DashboardLayout } from '../lib/dashboardLayout'
+import { buildDashboardWidgetExportPermissions } from '../lib/widgetExport'
 
 export function CustomDashboard() {
   const { id } = useParams<{ id: string }>()
@@ -47,6 +48,25 @@ export function CustomDashboard() {
     loadDashboard()
   }, [loadDashboard])
 
+  const getWidgetExportPermissions = useCallback(
+    (reportId: string) => {
+      if (!id) {
+        return { png: false, csv: false, pdf: false, xlsx: false }
+      }
+      return buildDashboardWidgetExportPermissions(hasPermission, id, reportId)
+    },
+    [hasPermission, id],
+  )
+
+  const exportContext = useMemo(
+    () => ({
+      dashboardName: dashboard?.name,
+      dashboardDescription: dashboard?.description ?? undefined,
+      filterLabel: formatFilterLabel(filters),
+    }),
+    [dashboard?.name, dashboard?.description, filters],
+  )
+
   if (!id) {
     return <Navigate to="/" replace />
   }
@@ -73,9 +93,7 @@ export function CustomDashboard() {
         showDateFilter
         dateFilter={filters}
         onDateFilterChange={setFilters}
-        showExport={
-          canViewCustom && hasPermission(dashboardModuleKey(id), 'export_pdf')
-        }
+        showExport={false}
       />
 
       <div className="flex-1 overflow-y-auto p-6">
@@ -109,6 +127,9 @@ export function CustomDashboard() {
               previewMode
               dashboardId={id}
               queryFilters={queryFilters}
+              showWidgetExport
+              exportContext={exportContext}
+              getWidgetExportPermissions={getWidgetExportPermissions}
               onChange={() => {}}
             />
           </>

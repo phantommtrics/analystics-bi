@@ -1,4 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+
+export type EChartHandle = {
+  getDataUrl: () => string | null
+}
 
 interface EChartBaseProps {
   option: unknown
@@ -6,13 +10,28 @@ interface EChartBaseProps {
   height?: string | number
 }
 
-export function EChartBase({
-  option,
-  className = '',
-  height = 300,
-}: EChartBaseProps) {
+export const EChartBase = forwardRef<EChartHandle, EChartBaseProps>(function EChartBase(
+  { option, className = '', height = 300 },
+  ref,
+) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstance = useRef<any>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getDataUrl: () => {
+        if (!chartInstance.current) return null
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+        return chartInstance.current.getDataURL({
+          type: 'png',
+          pixelRatio: 2,
+          backgroundColor: isDark ? '#1a1d27' : '#ffffff',
+        })
+      },
+    }),
+    [],
+  )
 
   useEffect(() => {
     if (!(window as any).echarts) {
@@ -66,4 +85,4 @@ export function EChartBase({
       }}
     />
   )
-}
+})

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import type { ReportVisualization } from '../../lib/reportConstants'
 import {
@@ -6,44 +6,70 @@ import {
   rowsToPieData,
 } from '../../lib/queryResultChart'
 import { formatQueryStatus } from '../../lib/queryResultTable'
+import {
+  isChartVisualization,
+  runWidgetExport,
+  type WidgetExportContext,
+  type WidgetExportFormat,
+  type WidgetExportPermissions,
+} from '../../lib/widgetExport'
+import type { EChartHandle } from '../charts/EChartBase'
+import { WidgetExportMenu } from '../dashboard/WidgetExportMenu'
 import { ReportChartPreview } from './ReportChartPreview'
 import { ChartPreviewSkeleton } from './ChartPreviewSkeleton'
 import { QueryResultsTable } from './QueryResultsTable'
 
 interface ReportRunDisplayProps {
+  reportName: string
   visualization: ReportVisualization
   queryResult: QueryExecuteResult | null
   queryError: string | null
   isRunning: boolean
   dateFilterPending?: boolean
+  /** Catalog view: table only, table export formats (CSV/PDF/XLSX). */
+  tableOnly?: boolean
+  showExport?: boolean
+  exportContext?: WidgetExportContext
+  exportPermissions?: WidgetExportPermissions
 }
 
 export function ReportRunDisplay({
+  reportName,
   visualization,
   queryResult,
   queryError,
   isRunning,
   dateFilterPending = false,
+  tableOnly = false,
+  showExport = false,
+  exportContext,
+  exportPermissions = { png: false, csv: false, pdf: false, xlsx: false },
 }: ReportRunDisplayProps) {
+  const [exportError, setExportError] = useState<string | null>(null)
+  const chartRef = useRef<EChartHandle>(null)
+  const effectiveVisualization = tableOnly ? 'TABLE_ONLY' : visualization
+  const showCharts = !tableOnly
+
   const chartData = useMemo(() => {
-    if (!queryResult?.rows.length) {
+    if (!showCharts || !queryResult?.rows.length) {
       return { labels: [] as string[], series: [] as { name: string; data: number[] }[] }
     }
     return rowsToChartData(queryResult.columns, queryResult.rows)
-  }, [queryResult])
+  }, [queryResult, showCharts])
 
   const pieData = useMemo(() => {
-    if (!queryResult) return []
+    if (!showCharts || !queryResult) return []
     return rowsToPieData(queryResult.columns, queryResult.rows)
-  }, [queryResult])
+  }, [queryResult, showCharts])
 
   const showChart =
+    showCharts &&
     !isRunning &&
-    visualization !== 'TABLE_ONLY' &&
+    effectiveVisualization !== 'TABLE_ONLY' &&
     queryResult &&
     (chartData.series.length > 0 || pieData.length > 0)
 
-  const showChartSkeleton = isRunning && visualization !== 'TABLE_ONLY'
+  const showChartSkeleton = showCharts && isRunning && effectiveVisualization !== 'TABLE_ONLY'
 
   const statusMessage = queryError
     ? queryError
@@ -54,6 +80,32 @@ export function ReportRunDisplay({
         : null
 
   const showTable = isRunning || (queryResult !== null && queryResult.rows.length > 0)
+
+  const canExport =
+    showExport &&
+    !isRunning &&
+    !queryError &&
+    queryResult !== null &&
+    !dateFilterPending &&
+    (isChartVisualization(effectiveVisualization)
+      ? chartData.series.length > 0 || pieData.length > 0
+      : queryResult.rows.length > 0)
+
+  const handleExport = async (format: WidgetExportFormat) => {
+    if (!queryResult) return
+    setExportError(null)
+
+    try {
+      await runWidgetExport(format, exportPermissions, {
+        result: queryResult,
+        reportName,
+        exportContext,
+        getChartDataUrl: () => chartRef.current?.getDataUrl() ?? null,
+      })
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed')
+    }
+  }
 
   if (dateFilterPending) {
     return (
@@ -66,13 +118,27 @@ export function ReportRunDisplay({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {statusMessage && (
+      {(statusMessage || canExport || exportError) && (
         <div
-          className={`shrink-0 border-b border-border px-6 py-2 text-sm ${
+          className={`flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-2 text-sm ${
             queryError ? 'bg-semantic-red/10 text-semantic-red' : 'text-text-secondary'
           }`}
         >
-          {statusMessage}
+          <div className="min-w-0 flex-1">
+            {statusMessage && <span>{statusMessage}</span>}
+            {exportError && (
+              <p className={statusMessage ? 'mt-1 text-xs text-semantic-red' : 'text-semantic-red'}>
+                {exportError}
+              </p>
+            )}
+          </div>
+          {canExport && (
+            <WidgetExportMenu
+              visualization={effectiveVisualization}
+              permissions={exportPermissions}
+              onExport={handleExport}
+            />
+          )}
         </div>
       )}
 
@@ -96,7 +162,8 @@ export function ReportRunDisplay({
         {showChart && (
           <div className="mb-6 rounded-lg border border-border bg-bg-primary p-4 shadow-sm">
             <ReportChartPreview
-              visualization={visualization}
+              ref={chartRef}
+              visualization={effectiveVisualization}
               chartData={chartData}
               pieData={pieData}
               height={360}
@@ -105,7 +172,8 @@ export function ReportRunDisplay({
         )}
 
         {queryResult &&
-          visualization !== 'TABLE_ONLY' &&
+          !tableOnly &&
+          effectiveVisualization !== 'TABLE_ONLY' &&
           !showChart &&
           !isRunning &&
           queryResult.rows.length > 0 && (

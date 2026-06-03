@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { forwardRef, useMemo } from 'react'
 import { formatGMD } from '../../lib/format'
-import { EChartBase } from './EChartBase'
+import { EChartBase, type EChartHandle } from './EChartBase'
 
 interface PieChartProps {
   data: {
@@ -11,11 +11,10 @@ interface PieChartProps {
   isCurrency?: boolean
 }
 
-export function PieChart({
-  data,
-  height = 300,
-  isCurrency = false,
-}: PieChartProps) {
+export const PieChart = forwardRef<EChartHandle, PieChartProps>(function PieChart(
+  { data, height = 300, isCurrency = false },
+  ref,
+) {
   const option = useMemo(() => {
     const colors = [
       '#2E6DB4',
@@ -87,5 +86,5 @@ export function PieChart({
     }
   }, [data, isCurrency])
 
-  return <EChartBase option={option} height={height} />
-}
+  return <EChartBase ref={ref} option={option} height={height} />
+})

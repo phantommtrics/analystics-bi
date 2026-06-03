@@ -6,6 +6,9 @@ declare global {
       authUser?: {
         id: string
         userType: UserType
+        username: string
+        email: string
+        displayName: string | null
         permissions: string[]
         mustChangePassword: boolean
       }

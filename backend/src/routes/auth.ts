@@ -7,7 +7,9 @@ import {
   revokeRefreshToken,
   rotateRefreshToken,
 } from '../auth/service.js'
+import { clientIp, recordAuditEvent } from '../audit/service.js'
 import { authenticate } from '../middleware/authenticate.js'
+import { hashToken } from '../auth/tokens.js'
 
 const loginSchema = z.object({
   identifier: z.string().min(1),
@@ -31,10 +33,27 @@ authRouter.post('/login', async (req, res) => {
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const ip = clientIp(req)
+  const identifier = parsed.data.identifier.trim()
+
   const session = await loginWithIdentifier(parsed.data.identifier, parsed.data.password)
   if (!session) {
+    void recordAuditEvent({
+      userLabel: identifier,
+      action: 'LOGIN_FAILED',
+      resource: 'System',
+      ipAddress: ip,
+    })
     return res.status(401).json({ message: 'Invalid credentials' })
   }
+
+  void recordAuditEvent({
+    userId: session.user.id,
+    userLabel: `${session.user.displayName?.trim() || session.user.username} (${session.user.email})`,
+    action: 'LOGIN_SUCCESS',
+    resource: 'System',
+    ipAddress: ip,
+  })
 
   return res.json(session)
 })
@@ -58,7 +77,25 @@ authRouter.post('/logout', async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ message: 'Invalid payload' })
   }
+
+  const tokenHash = hashToken(parsed.data.refreshToken)
+  const existing = await prisma.refreshToken.findUnique({
+    where: { tokenHash },
+    include: { user: { select: { id: true, username: true, email: true, displayName: true } } },
+  })
+
   await revokeRefreshToken(parsed.data.refreshToken)
+
+  if (existing?.user) {
+    void recordAuditEvent({
+      userId: existing.user.id,
+      userLabel: `${existing.user.displayName?.trim() || existing.user.username} (${existing.user.email})`,
+      action: 'LOGOUT',
+      resource: 'System',
+      ipAddress: clientIp(req),
+    })
+  }
+
   return res.status(204).send()
 })
 
@@ -108,6 +145,14 @@ authRouter.post('/change-password', authenticate, async (req, res) => {
     }
     return res.status(404).json({ message: 'User not found' })
   }
+
+  void recordAuditEvent({
+    userId: authUser.id,
+    userLabel: `${authUser.displayName?.trim() || authUser.username} (${authUser.email})`,
+    action: 'CHANGE_PASSWORD',
+    resource: 'System',
+    ipAddress: clientIp(req),
+  })
 
   return res.json({ message: 'Password updated' })
 })

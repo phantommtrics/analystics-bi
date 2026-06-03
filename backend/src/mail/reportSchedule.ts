@@ -1,12 +1,19 @@
 import { Resend } from 'resend'
 import { env, isResendConfigured, shouldFallbackMailToConsole } from '../env.js'
 
+export type ReportScheduleAttachment = {
+  filename: string
+  content: Buffer
+}
+
 export interface ReportScheduleEmailPayload {
   to: string
   reportName: string
   groupName: string
   scheduledAt: Date
   reportUrl: string
+  filterLabel?: string
+  attachments?: ReportScheduleAttachment[]
 }
 
 export type ReportScheduleDeliveryResult =
@@ -45,6 +52,10 @@ function buildReportScheduleHtml(payload: ReportScheduleEmailPayload): string {
   const groupName = escapeHtml(payload.groupName)
   const when = escapeHtml(formatScheduledAt(payload.scheduledAt))
   const reportUrl = escapeHtml(payload.reportUrl)
+  const filterLabel = payload.filterLabel
+    ? escapeHtml(payload.filterLabel)
+    : null
+  const hasAttachments = (payload.attachments?.length ?? 0) > 0
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -75,11 +86,16 @@ function buildReportScheduleHtml(payload: ReportScheduleEmailPayload): string {
                   <td style="padding:20px 24px;font-size:14px;line-height:1.8;">
                     <p style="margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND.muted};">Schedule</p>
                     <p style="margin:0;color:${BRAND.text};"><strong>Due:</strong> ${when} UTC</p>
+                    ${filterLabel ? `<p style="margin:8px 0 0;color:${BRAND.text};"><strong>Data range:</strong> ${filterLabel}</p>` : ''}
                   </td>
                 </tr>
               </table>
               <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:${BRAND.muted};">
-                Report exports (PDF/CSV attachments) are not included yet — open the report in BI to view the latest data.
+                ${
+                  hasAttachments
+                    ? 'PDF and CSV exports for this scheduled run are attached. You can also open the report in BI for interactive viewing.'
+                    : 'Open the report in BI to view the latest data.'
+                }
               </p>
               <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto;">
                 <tr>
@@ -113,7 +129,20 @@ function logScheduleToConsole(payload: ReportScheduleEmailPayload) {
     groupName: payload.groupName,
     scheduledAt: payload.scheduledAt.toISOString(),
     reportUrl: payload.reportUrl,
+    filterLabel: payload.filterLabel,
+    attachments: payload.attachments?.map((a) => ({
+      filename: a.filename,
+      bytes: a.content.length,
+    })),
   })
+}
+
+function resendAttachments(attachments: ReportScheduleAttachment[] | undefined) {
+  if (!attachments?.length) return undefined
+  return attachments.map((file) => ({
+    filename: file.filename,
+    content: file.content.toString('base64'),
+  }))
 }
 
 function isLikelyConnectivityError(error: unknown): boolean {
@@ -162,6 +191,7 @@ export async function sendReportScheduleEmail(
       to: payload.to,
       subject,
       html: buildReportScheduleHtml(payload),
+      attachments: resendAttachments(payload.attachments),
     })
 
     if (error) {

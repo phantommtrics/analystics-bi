@@ -11,6 +11,8 @@ interface TopBarProps {
   dateFilter?: DashboardFilters
   onDateFilterChange?: (filters: DashboardFilters) => void
   showExport?: boolean
+  onExport?: () => void
+  exportLoading?: boolean
   onMenuClick?: () => void
   primaryAction?: {
     label: string
@@ -28,6 +30,8 @@ export function TopBar({
   dateFilter,
   onDateFilterChange,
   showExport = true,
+  onExport,
+  exportLoading = false,
   primaryAction,
   toolbar,
 }: TopBarProps) {
@@ -63,9 +67,14 @@ export function TopBar({
         )}
 
         {showExport && (
-          <button className="hidden items-center gap-2 rounded-sm border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-bg-tertiary md:flex">
-            <i className="ti ti-download text-text-secondary"></i>
-            <span>Export</span>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={!onExport || exportLoading}
+            className="hidden items-center gap-2 rounded-sm border border-border bg-bg-secondary px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50 md:flex"
+          >
+            <i className={`ti ${exportLoading ? 'ti-loader animate-spin' : 'ti-download'} text-text-secondary`}></i>
+            <span>{exportLoading ? 'Exporting…' : 'Export'}</span>
           </button>
         )}
 

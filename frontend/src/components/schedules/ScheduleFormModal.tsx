@@ -126,7 +126,8 @@ export function ScheduleFormModal({
         <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
         <p className="mt-1 text-sm text-text-secondary">
           Recipients receive an email with a link to open the report. Times use your browser&apos;s
-          local timezone. PDF and CSV attachments are planned for a later release.
+          local timezone. Recipients receive PDF and CSV exports for each run, filtered to the
+          schedule date.
         </p>
 
         <div className="mt-5 space-y-4">

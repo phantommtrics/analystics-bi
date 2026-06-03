@@ -18,6 +18,10 @@ import {
   widgetGridStyle,
 } from '../../lib/dashboardLayout'
 import type { ReportVisualization } from '../../lib/reportConstants'
+import {
+  type WidgetExportContext,
+  type WidgetExportPermissions,
+} from '../../lib/widgetExport'
 import { DashboardKpiWidget } from './DashboardKpiWidget'
 import { DashboardWidget } from './DashboardWidget'
 import { KpiWidgetEditModal } from './KpiWidgetEditModal'
@@ -37,6 +41,9 @@ interface DashboardGridProps {
   queryFilters?: Record<string, string>
   /** When viewing a saved dashboard, pass id so widgets can execute embedded reports */
   dashboardId?: string
+  showWidgetExport?: boolean
+  exportContext?: WidgetExportContext
+  getWidgetExportPermissions?: (reportId: string) => WidgetExportPermissions
 }
 
 type DragState = {
@@ -64,6 +71,9 @@ export function DashboardGrid({
   previewMode = false,
   queryFilters,
   dashboardId,
+  showWidgetExport = false,
+  exportContext,
+  getWidgetExportPermissions,
 }: DashboardGridProps) {
   const gridRef = useRef<HTMLDivElement>(null)
   const layoutRef = useRef(layout)
@@ -311,6 +321,16 @@ export function DashboardGrid({
                     canEdit={canEdit && !previewMode}
                     queryFilters={queryFilters}
                     dashboardId={dashboardId}
+                    showExport={showWidgetExport}
+                    exportContext={exportContext}
+                    exportPermissions={
+                      getWidgetExportPermissions?.(report.id) ?? {
+                        png: false,
+                        csv: false,
+                        pdf: false,
+                        xlsx: false,
+                      }
+                    }
                     onVisualizationChange={(v) => patchWidget(widget.id, { visualization: v })}
                     onRemove={() => removeWidget(widget.id)}
                     onDragHandleMouseDown={(e) => startWidgetDrag(widget, e)}
@@ -329,6 +349,7 @@ export function DashboardGrid({
         reports={reports}
         widget={editingKpi ?? null}
         queryFilters={queryFilters}
+        dashboardId={dashboardId}
         onCancel={() => setEditingKpiId(null)}
         onConfirm={(patch: KpiWidgetEditPatch) => {
           if (editingKpiId) patchWidget(editingKpiId, patch)

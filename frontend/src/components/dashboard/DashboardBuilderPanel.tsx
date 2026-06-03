@@ -273,9 +273,13 @@ export function DashboardBuilderPanel({
                     color: DEFAULT_KPI_WIDGET.textColor,
                   }}
                 >
-                  <i className={`${iconClassName(DEFAULT_KPI_WIDGET.icon)} mb-1 block text-lg`}></i>
-                  <p className="text-sm font-semibold">{DEFAULT_KPI_WIDGET.value}</p>
-                  <p className="text-[10px] opacity-85">{DEFAULT_KPI_WIDGET.label}</p>
+                  <i className={`${iconClassName(DEFAULT_KPI_WIDGET.icon)} text-[22px] opacity-90`}></i>
+                  <div className="mt-2">
+                    <p className="mb-0.5 text-kpi font-medium leading-none">
+                      {DEFAULT_KPI_WIDGET.value}
+                    </p>
+                    <p className="text-sm opacity-85">{DEFAULT_KPI_WIDGET.label}</p>
+                  </div>
                 </div>
               </div>
             </li>

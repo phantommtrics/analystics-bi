@@ -14,7 +14,15 @@ interface SearchableSelectProps {
   searchPlaceholder?: string
   emptyMessage?: string
   disabled?: boolean
+  /** Max options visible before scrolling. When omitted, list uses a taller default. */
+  maxVisibleItems?: number
+  allowCustom?: boolean
+  customOptionLabel?: (query: string) => string
+  allowClear?: boolean
+  clearLabel?: string
 }
+
+const ITEM_HEIGHT_REM = 2.5
 
 export function SearchableSelect({
   options,
@@ -24,6 +32,11 @@ export function SearchableSelect({
   searchPlaceholder = 'Search...',
   emptyMessage = 'No options found',
   disabled = false,
+  maxVisibleItems,
+  allowCustom = false,
+  customOptionLabel = (query) => `Use custom: ${query}`,
+  allowClear = false,
+  clearLabel = 'None',
 }: SearchableSelectProps) {
   const listboxId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -32,16 +45,29 @@ export function SearchableSelect({
   const [query, setQuery] = useState('')
 
   const selected = options.find((o) => o.id === value)
+  const displayLabel = selected?.label ?? (value && value.length > 0 ? value : null)
+
+  const trimmedQuery = query.trim()
 
   const filteredOptions = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = trimmedQuery.toLowerCase()
     if (!q) return options
     return options.filter(
       (o) =>
         o.label.toLowerCase().includes(q) ||
         o.description?.toLowerCase().includes(q),
     )
-  }, [options, query])
+  }, [options, trimmedQuery])
+
+  const showCustomOption =
+    allowCustom &&
+    trimmedQuery.length > 0 &&
+    !options.some((o) => o.id.toLowerCase() === trimmedQuery.toLowerCase())
+
+  const listMaxHeight =
+    maxVisibleItems != null && maxVisibleItems > 0
+      ? `${maxVisibleItems * ITEM_HEIGHT_REM}rem`
+      : undefined
 
   useEffect(() => {
     if (!open) return
@@ -59,6 +85,17 @@ export function SearchableSelect({
     if (open) searchRef.current?.focus()
   }, [open])
 
+  function selectValue(next: string | null) {
+    onChange(next)
+    setOpen(false)
+    setQuery('')
+  }
+
+  const hasListItems =
+    (allowClear && !trimmedQuery) ||
+    filteredOptions.length > 0 ||
+    showCustomOption
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -72,8 +109,8 @@ export function SearchableSelect({
         aria-expanded={open}
         aria-controls={listboxId}
       >
-        <span className={selected ? 'text-text-primary' : 'text-text-secondary'}>
-          {selected ? selected.label : placeholder}
+        <span className={displayLabel ? 'truncate text-text-primary' : 'text-text-secondary'}>
+          {displayLabel ?? placeholder}
         </span>
         <i
           className={`ti ti-chevron-down shrink-0 text-text-secondary transition-transform ${open ? 'rotate-180' : ''}`}
@@ -90,38 +127,77 @@ export function SearchableSelect({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && allowCustom && trimmedQuery) {
+                    e.preventDefault()
+                    selectValue(trimmedQuery)
+                  }
+                }}
                 placeholder={searchPlaceholder}
                 className="w-full rounded-md border border-border bg-bg-secondary py-1.5 pl-8 pr-3 text-sm outline-none focus:border-brand-blue"
               />
             </div>
           </div>
-          <ul id={listboxId} role="listbox" className="max-h-48 overflow-y-auto py-1">
-            {filteredOptions.length === 0 ? (
+          <ul
+            id={listboxId}
+            role="listbox"
+            className={`overflow-y-auto py-1 ${listMaxHeight ? '' : 'max-h-48'}`}
+            style={listMaxHeight ? { maxHeight: listMaxHeight } : undefined}
+          >
+            {!hasListItems ? (
               <li className="px-3 py-2 text-sm text-text-secondary">{emptyMessage}</li>
             ) : (
-              filteredOptions.map((option) => {
-                const isSelected = value === option.id
-                return (
-                  <li key={option.id} role="option" aria-selected={isSelected}>
+              <>
+                {allowClear && !trimmedQuery && (
+                  <li role="option" aria-selected={!value}>
                     <button
                       type="button"
-                      onClick={() => {
-                        onChange(option.id)
-                        setOpen(false)
-                        setQuery('')
-                      }}
-                      className={`flex w-full flex-col px-3 py-2 text-left text-sm transition hover:bg-bg-secondary ${
-                        isSelected ? 'bg-brand-blue/5 text-brand-blue' : ''
+                      onClick={() => selectValue(null)}
+                      className={`flex w-full px-3 py-2 text-left text-sm transition hover:bg-bg-secondary ${
+                        !value ? 'bg-brand-blue/5 text-brand-blue' : 'text-text-secondary'
                       }`}
                     >
-                      <span className="font-medium">{option.label}</span>
-                      {option.description && (
-                        <span className="text-xs text-text-secondary">{option.description}</span>
-                      )}
+                      {clearLabel}
                     </button>
                   </li>
-                )
-              })
+                )}
+                {filteredOptions.map((option) => {
+                  const isSelected = value === option.id
+                  return (
+                    <li key={option.id} role="option" aria-selected={isSelected}>
+                      <button
+                        type="button"
+                        onClick={() => selectValue(option.id)}
+                        className={`flex w-full flex-col px-3 py-2 text-left text-sm transition hover:bg-bg-secondary ${
+                          isSelected ? 'bg-brand-blue/5 text-brand-blue' : ''
+                        }`}
+                      >
+                        <span className="truncate font-medium">{option.label}</span>
+                        {option.description && (
+                          <span className="truncate text-xs text-text-secondary">
+                            {option.description}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  )
+                })}
+                {showCustomOption && (
+                  <li role="option" aria-selected={value === trimmedQuery}>
+                    <button
+                      type="button"
+                      onClick={() => selectValue(trimmedQuery)}
+                      className={`flex w-full px-3 py-2 text-left text-sm transition hover:bg-bg-secondary ${
+                        value === trimmedQuery
+                          ? 'bg-brand-blue/5 text-brand-blue'
+                          : 'text-text-primary'
+                      }`}
+                    >
+                      {customOptionLabel(trimmedQuery)}
+                    </button>
+                  </li>
+                )}
+              </>
             )}
           </ul>
         </div>

@@ -5,33 +5,27 @@ import {
   defaultValueForVariable,
   extractSqlVariables,
   isDateVariable,
+  parseVariableToken,
   sqlHasDateVariables,
 } from '../reports/sqlVariables.js'
-import { dateRangeEndingOnAnchor } from './dateRanges.js'
+import { scheduleReportDateRange } from './dateRanges.js'
 import { scheduleLocalAnchorDate } from './localTime.js'
 
 export type ScheduleFilterContext = {
   scheduledAt: Date
   timezoneOffsetMinutes: number
   recurrence: ReportScheduleRecurrence
-}
-
-function recurrenceRangeKind(
-  recurrence: ReportScheduleRecurrence,
-): 'day' | 'week' | 'month' {
-  switch (recurrence) {
-    case ReportScheduleRecurrence.WEEKLY:
-      return 'week'
-    case ReportScheduleRecurrence.MONTHLY:
-      return 'month'
-    default:
-      return 'day'
-  }
+  dayOfWeek?: number | null
+  dayOfMonth?: number | null
 }
 
 export function scheduleDateRange(ctx: ScheduleFilterContext) {
   const anchorIso = scheduleLocalAnchorDate(ctx.scheduledAt, ctx.timezoneOffsetMinutes)
-  return dateRangeEndingOnAnchor(anchorIso, recurrenceRangeKind(ctx.recurrence))
+  return scheduleReportDateRange({
+    anchorIso,
+    recurrence: ctx.recurrence,
+    dayOfMonth: ctx.dayOfMonth,
+  })
 }
 
 export function formatScheduleFilterLabel(range: { dateFrom: string; dateTo: string }): string {
@@ -52,6 +46,7 @@ export function buildScheduleExecuteFilters(
   if (!sqlHasDateVariables(variables)) {
     const custom: Record<string, string> = {}
     for (const name of variables) {
+      if (parseVariableToken(name).optional) continue
       const value = defaultValueForVariable(name, anchorIso)
       if (value) custom[name] = value
     }
@@ -63,6 +58,7 @@ export function buildScheduleExecuteFilters(
 
   for (const name of variables) {
     if (isDateVariable(name)) continue
+    if (parseVariableToken(name).optional) continue
     if (!withDates[name]) {
       const value = defaultValueForVariable(name, anchorIso)
       if (value) withDates[name] = value

@@ -1,9 +1,9 @@
-const PARAM_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+const PARAM_BASE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
-/** Match :param but not PostgreSQL ::cast (e.g. column::text). */
-const COLON_PARAM = /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)\b/g
-const MUSTACHE_PARAM = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g
-const TEMPLATE_PARAM = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g
+const COLON_TOKEN =
+  /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?(?=\s|,|\)|;|$|\]|\}|\|)/g
+const MUSTACHE_TOKEN = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?\s*\}\}/g
+const TEMPLATE_TOKEN = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?\}/g
 
 const DATE_FROM_ALIASES = new Set([
   'dateFrom',
@@ -23,6 +23,103 @@ const DATE_TO_ALIASES = new Set([
   'endDateTime',
   'dateToExclusive',
 ])
+
+export type SqlVariableDef = {
+  token: string
+  baseName: string
+  optional: boolean
+  array: boolean
+}
+
+export function buildVariableToken(
+  baseName: string,
+  options?: { array?: boolean; optional?: boolean },
+): string {
+  let token = baseName
+  if (options?.array) token += '[]'
+  if (options?.optional) token += '?'
+  return token
+}
+
+export function parseVariableToken(token: string): SqlVariableDef {
+  let baseName = token
+  let optional = false
+  let array = false
+
+  if (baseName.endsWith('[]?')) {
+    baseName = baseName.slice(0, -3)
+    array = true
+    optional = true
+  } else if (baseName.endsWith('[]')) {
+    baseName = baseName.slice(0, -2)
+    array = true
+  } else if (baseName.endsWith('?')) {
+    baseName = baseName.slice(0, -1)
+    optional = true
+  }
+
+  return {
+    token,
+    baseName,
+    optional,
+    array,
+  }
+}
+
+function addToken(found: Map<string, SqlVariableDef>, baseName: string, array: boolean, optional: boolean) {
+  if (!PARAM_BASE.test(baseName)) return
+  const token = buildVariableToken(baseName, { array, optional })
+  found.set(token, { token, baseName, optional, array })
+}
+
+export function extractSqlVariableDefs(sql: string): SqlVariableDef[] {
+  const found = new Map<string, SqlVariableDef>()
+  for (const re of [COLON_TOKEN, MUSTACHE_TOKEN, TEMPLATE_TOKEN]) {
+    re.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = re.exec(sql)) !== null) {
+      addToken(found, match[1], Boolean(match[2]), Boolean(match[3]))
+    }
+  }
+  return [...found.values()].sort((a, b) => a.token.localeCompare(b.token))
+}
+
+export function extractSqlVariables(sql: string): string[] {
+  return extractSqlVariableDefs(sql).map((d) => d.token)
+}
+
+export function parseArrayValue(value: string): string[] {
+  const trimmed = value.trim()
+  if (!trimmed) return []
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => (item === null || item === undefined ? '' : String(item).trim()))
+          .filter(Boolean)
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  return trimmed
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+export function hasFilterValue(value: string | undefined, def: SqlVariableDef): boolean {
+  if (value === undefined || value === '') return false
+  if (def.array) return parseArrayValue(value).length > 0
+  return value.trim().length > 0
+}
+
+export function isRequiredVariable(def: SqlVariableDef): boolean {
+  return !def.optional
+}
 
 function addDays(isoDate: string, days: number): string {
   const date = new Date(`${isoDate}T12:00:00`)
@@ -81,29 +178,17 @@ export function expandQueryFilters(filters: Record<string, string>): Record<stri
   return expanded
 }
 
-export function extractSqlVariables(sql: string): string[] {
-  const found = new Set<string>()
-  for (const re of [COLON_PARAM, MUSTACHE_PARAM, TEMPLATE_PARAM]) {
-    re.lastIndex = 0
-    let match: RegExpExecArray | null
-    while ((match = re.exec(sql)) !== null) {
-      const name = match[1]
-      if (PARAM_NAME.test(name)) found.add(name)
-    }
-  }
-  return [...found].sort((a, b) => a.localeCompare(b))
-}
-
 export function isDateVariable(name: string): boolean {
-  return DATE_FROM_ALIASES.has(name) || DATE_TO_ALIASES.has(name)
+  const { baseName } = parseVariableToken(name)
+  return DATE_FROM_ALIASES.has(baseName) || DATE_TO_ALIASES.has(baseName)
 }
 
 export function isDateFromVariable(name: string): boolean {
-  return DATE_FROM_ALIASES.has(name)
+  return DATE_FROM_ALIASES.has(parseVariableToken(name).baseName)
 }
 
 export function isDateToVariable(name: string): boolean {
-  return DATE_TO_ALIASES.has(name)
+  return DATE_TO_ALIASES.has(parseVariableToken(name).baseName)
 }
 
 export function sqlHasDateVariables(variables: string[]): boolean {
@@ -111,13 +196,22 @@ export function sqlHasDateVariables(variables: string[]): boolean {
 }
 
 export function formatVariableLabel(name: string): string {
-  return name
+  const { baseName } = parseVariableToken(name)
+  return baseName
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+export function variableInputHint(def: SqlVariableDef): string {
+  if (def.array) {
+    return 'Comma-separated values, e.g. east, west'
+  }
+  return `:${def.token}`
+}
+
 export function defaultValueForVariable(name: string): string {
+  const { baseName } = parseVariableToken(name)
   const today = new Date()
   const y = today.getFullYear()
   const m = String(today.getMonth() + 1).padStart(2, '0')
@@ -125,12 +219,11 @@ export function defaultValueForVariable(name: string): string {
   const isoToday = `${y}-${m}-${d}`
   const monthStart = `${y}-${m}-01`
 
-  if (isDateFromVariable(name)) return monthStart
-  if (isDateToVariable(name)) return isoToday
+  if (DATE_FROM_ALIASES.has(baseName)) return monthStart
+  if (DATE_TO_ALIASES.has(baseName)) return isoToday
   return ''
 }
 
-/** Apply a date range to whichever date placeholders exist in the SQL. */
 export function applyDateRangeToVariables(
   variables: string[],
   dateFrom: string,
@@ -156,4 +249,4 @@ export function buildExecuteFilters(values: Record<string, string>): Record<stri
 }
 
 export const SQL_VARIABLE_HINT =
-  'Use :name, {{ name }}, or ${name} in SQL (not ::cast). Values are substituted as quoted literals when you run the query.'
+  'Use :name for required values, :name? for optional, :name[] for lists (IN clauses). Wrap optional filters in [[ ... ]] so they are omitted when empty. Example: [[AND status = :status?]] and WHERE region IN (:regions[]).'

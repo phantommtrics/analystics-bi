@@ -8,6 +8,19 @@ export interface QueryExecuteResult {
   truncated: boolean
 }
 
+export interface SchemaTable {
+  schema: string
+  name: string
+  qualifiedName: string
+}
+
+export interface SchemaColumn {
+  name: string
+  dataType: string
+  nullable: boolean
+  defaultValue: string | null
+}
+
 async function reportBuilderFetch<T>(
   path: string,
   accessToken: string,
@@ -29,6 +42,22 @@ async function reportBuilderFetch<T>(
 }
 
 export const reportBuilderApi = {
+  listTables: (token: string, dataSourceId: string, search = '') => {
+    const qs = new URLSearchParams({ dataSourceId })
+    if (search.trim()) qs.set('search', search.trim())
+    return reportBuilderFetch<SchemaTable[]>(`/schema/tables?${qs.toString()}`, token)
+  },
+
+  getTableColumns: (
+    token: string,
+    dataSourceId: string,
+    schema: string,
+    table: string,
+  ) => {
+    const qs = new URLSearchParams({ dataSourceId, schema, table })
+    return reportBuilderFetch<SchemaColumn[]>(`/schema/columns?${qs.toString()}`, token)
+  },
+
   executeQuery: (
     token: string,
     data: { dataSourceId: string; sql: string; filters?: Record<string, string> },

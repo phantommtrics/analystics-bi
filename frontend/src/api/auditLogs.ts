@@ -29,6 +29,7 @@ export const AUDIT_PAGE_SIZE = 50
 
 function buildQuery(filters: AuditLogFilters, page?: number, pageSize?: number): string {
   const params = new URLSearchParams()
+  params.set('tzOffset', String(new Date().getTimezoneOffset()))
   if (page != null) params.set('page', String(page))
   if (pageSize != null) params.set('pageSize', String(pageSize))
   if (filters.dateFrom) params.set('dateFrom', filters.dateFrom)

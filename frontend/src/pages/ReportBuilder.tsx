@@ -1,52 +1,38 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { TopBar } from '../components/layout/TopBar'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { LoadingButton } from '../components/ui/LoadingButton'
 import { QueryTabBar } from '../components/report/QueryTabBar'
+import { DatabaseTableExplorer, type SqlInsertMode } from '../components/report/DatabaseTableExplorer'
+import { ReportBuilderQueryPreview } from '../components/report/ReportBuilderQueryPreview'
 import { ReportBuilderSidebar } from '../components/report/ReportBuilderSidebar'
-import { ReportPreviewPanel } from '../components/report/ReportPreviewPanel'
 import { ReportSaveModal } from '../components/report/ReportSaveModal'
-import { SqlEditor } from '../components/report/SqlEditor'
+import { SqlEditor, type SqlEditorHandle } from '../components/report/SqlEditor'
 import { datasourcesApi, type DataSourceSummary } from '../api/datasources'
 import { reportBuilderApi } from '../api/reportBuilder'
 import {
   reportsApi,
-  type SavedReportDetail,
   type SavedReportSummary,
 } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import {
   formatReportDate,
   type ReportCategory,
-  type ReportVisualization,
 } from '../lib/reportConstants'
 import { ReportVariablesPanel } from '../components/report/ReportVariablesPanel'
 import { useReportVariables } from '../hooks/useReportVariables'
 import { rowsToChartData, rowsToPieData } from '../lib/queryResultChart'
-import { createQueryTab, duplicateTabTitle, type QueryTab } from '../lib/queryTabs'
+import {
+  createQueryTab,
+  duplicateTabTitle,
+  isQueryTabDirty,
+  queryTabFromDetail,
+  type QueryEditorSnapshot,
+  type QueryTab,
+} from '../lib/queryTabs'
 
-const initialTab = createQueryTab('', 'Query 1')
-
-type EditorSnapshot = {
-  name: string
-  description: string
-  category: ReportCategory
-  sql: string
-  visualization: ReportVisualization
-  dataSourceId: string
-}
-
-function snapshotsEqual(a: EditorSnapshot, b: EditorSnapshot) {
-  return (
-    a.name === b.name &&
-    a.description === b.description &&
-    a.category === b.category &&
-    a.sql === b.sql &&
-    a.visualization === b.visualization &&
-    a.dataSourceId === b.dataSourceId
-  )
-}
+const initialTab = createQueryTab({ title: 'Query 1' })
 
 export function ReportBuilder() {
   const { accessToken, hasPermission } = useAuth()
@@ -62,14 +48,6 @@ export function ReportBuilder() {
 
   const [tabs, setTabs] = useState<QueryTab[]>([initialTab])
   const [activeTabId, setActiveTabId] = useState(initialTab.id)
-  const [previewExpanded, setPreviewExpanded] = useState(false)
-
-  const [activeReportId, setActiveReportId] = useState<string | null>(null)
-  const [reportName, setReportName] = useState('Untitled report')
-  const [reportDescription, setReportDescription] = useState('')
-  const [reportCategory, setReportCategory] = useState<ReportCategory>('GENERAL')
-  const [selectedDataSourceId, setSelectedDataSourceId] = useState('')
-  const [savedSnapshot, setSavedSnapshot] = useState<EditorSnapshot | null>(null)
 
   const [isRunning, setIsRunning] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -79,10 +57,11 @@ export function ReportBuilder() {
   const [saveModalOpen, setSaveModalOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<SavedReportSummary | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [isPublished, setIsPublished] = useState(false)
   const [publishLoading, setPublishLoading] = useState(false)
   const [pendingPublish, setPendingPublish] = useState(false)
   const [pendingUnpublish, setPendingUnpublish] = useState(false)
+
+  const sqlEditorRef = useRef<SqlEditorHandle>(null)
 
   const activeTab = useMemo(
     () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
@@ -109,28 +88,8 @@ export function ReportBuilder() {
     [activeTabId],
   )
 
-  const currentSnapshot = useMemo<EditorSnapshot>(
-    () => ({
-      name: reportName,
-      description: reportDescription,
-      category: reportCategory,
-      sql: activeTab.sql,
-      visualization: activeTab.visualization,
-      dataSourceId: selectedDataSourceId,
-    }),
-    [
-      reportName,
-      reportDescription,
-      reportCategory,
-      activeTab.sql,
-      activeTab.visualization,
-      selectedDataSourceId,
-    ],
-  )
-
-  const isDirty = savedSnapshot === null || !snapshotsEqual(currentSnapshot, savedSnapshot)
-
-  const splitView = activeTab.previewOpen
+  const isDirty = isQueryTabDirty(activeTab)
+  const activeReportId = activeTab.savedReportId
 
   const chartData = useMemo(() => {
     if (!activeTab.queryResult || activeTab.queryResult.rows.length === 0) {
@@ -160,57 +119,32 @@ export function ReportBuilder() {
     [tabs],
   )
 
-  const setReportContext = useCallback(
-    (report: SavedReportDetail) => {
-      setActiveReportId(report.id)
-      setReportName(report.name)
-      setReportDescription(report.description ?? '')
-      setReportCategory(report.category)
-      setSelectedDataSourceId(report.dataSourceId)
-      setIsPublished(report.isPublished)
-      setSavedSnapshot({
-        name: report.name,
-        description: report.description ?? '',
-        category: report.category,
-        sql: report.sql,
-        visualization: report.visualization,
-        dataSourceId: report.dataSourceId,
-      })
-      setSearchParams({ reportId: report.id }, { replace: true })
+  const syncUrlForTab = useCallback(
+    (tab: QueryTab) => {
+      if (tab.savedReportId) {
+        setSearchParams({ reportId: tab.savedReportId }, { replace: true })
+      } else {
+        setSearchParams({}, { replace: true })
+      }
     },
     [setSearchParams],
   )
 
   const openSavedReportInTab = useCallback(
-    (report: SavedReportDetail) => {
-      setReportContext(report)
-      setPreviewExpanded(false)
-
+    (report: Parameters<typeof queryTabFromDetail>[0]) => {
       const existing = tabs.find((t) => t.savedReportId === report.id)
       if (existing) {
         setActiveTabId(existing.id)
+        syncUrlForTab(existing)
         return
       }
 
-      const tab = createQueryTab(
-        report.sql,
-        report.name,
-        report.visualization,
-        report.id,
-      )
+      const tab = queryTabFromDetail(report)
       setTabs((prev) => [...prev, tab])
       setActiveTabId(tab.id)
+      syncUrlForTab(tab)
     },
-    [tabs, setReportContext],
-  )
-
-  const syncReportContextForTab = useCallback(
-    async (tab: QueryTab) => {
-      if (!accessToken || !tab.savedReportId) return
-      const report = await reportsApi.get(accessToken, tab.savedReportId)
-      setReportContext(report)
-    },
-    [accessToken, setReportContext],
+    [tabs, syncUrlForTab],
   )
 
   const loadReportById = useCallback(
@@ -228,7 +162,12 @@ export function ReportBuilder() {
       .list(accessToken, true)
       .then((list) => {
         setDataSources(list)
-        setSelectedDataSourceId((prev) => prev || list[0]?.id || '')
+        const defaultId = list[0]?.id ?? ''
+        if (defaultId) {
+          setTabs((prev) =>
+            prev.map((t) => (t.dataSourceId ? t : { ...t, dataSourceId: defaultId })),
+          )
+        }
       })
       .catch(() => setDataSources([]))
   }, [accessToken])
@@ -244,12 +183,11 @@ export function ReportBuilder() {
   }, [accessToken, loadSavedReports])
 
   const runQuery = useCallback(async () => {
-    if (!accessToken || !selectedDataSourceId || !activeTab.sql.trim()) return
+    if (!accessToken || !activeTab.dataSourceId || !activeTab.sql.trim()) return
     if (hasDateVariables && !dateFiltersEnabled) {
       updateActiveTab({
         queryError: 'Select a date filter before running this query.',
         queryResult: null,
-        previewOpen: true,
       })
       return
     }
@@ -257,28 +195,26 @@ export function ReportBuilder() {
     updateActiveTab({
       queryError: null,
       queryResult: null,
-      previewOpen: true,
     })
     setBannerError('')
     try {
       const result = await reportBuilderApi.executeQuery(accessToken, {
-        dataSourceId: selectedDataSourceId,
+        dataSourceId: activeTab.dataSourceId,
         sql: activeTab.sql,
         filters: queryFilters ?? {},
       })
-      updateActiveTab({ queryResult: result, queryError: null, previewOpen: true })
+      updateActiveTab({ queryResult: result, queryError: null })
     } catch (err) {
       updateActiveTab({
         queryError: err instanceof Error ? err.message : 'Query failed',
         queryResult: null,
-        previewOpen: true,
       })
     } finally {
       setIsRunning(false)
     }
   }, [
     accessToken,
-    selectedDataSourceId,
+    activeTab.dataSourceId,
     activeTab.sql,
     queryFilters,
     hasDateVariables,
@@ -295,29 +231,16 @@ export function ReportBuilder() {
       if (activeTabId !== existingTab.id) {
         setActiveTabId(existingTab.id)
       }
-      if (activeReportId !== reportId) {
-        syncReportContextForTab(existingTab).catch((err) =>
-          setBannerError(err instanceof Error ? err.message : 'Failed to load report'),
-        )
-      }
       return
     }
 
     loadReportById(reportId).catch((err) =>
       setBannerError(err instanceof Error ? err.message : 'Failed to load report'),
     )
-  }, [
-    accessToken,
-    searchParams,
-    tabs,
-    activeTabId,
-    activeReportId,
-    loadReportById,
-    syncReportContextForTab,
-  ])
+  }, [accessToken, searchParams, tabs, activeTabId, loadReportById])
 
   useEffect(() => {
-    if (searchParams.get('run') !== '1' || !selectedDataSourceId) return
+    if (searchParams.get('run') !== '1' || !activeTab.dataSourceId) return
     if (hasDateVariables && !dateFiltersEnabled) return
     void runQuery()
     setSearchParams(
@@ -330,7 +253,7 @@ export function ReportBuilder() {
     )
   }, [
     searchParams,
-    selectedDataSourceId,
+    activeTab.dataSourceId,
     hasDateVariables,
     dateFiltersEnabled,
     runQuery,
@@ -352,33 +275,21 @@ export function ReportBuilder() {
     if (isDirty && !window.confirm('Discard unsaved changes and start a new report?')) {
       return
     }
-    const tab = createQueryTab('', 'Query 1')
+    const tab = createQueryTab({
+      title: 'Query 1',
+      dataSourceId: dataSources[0]?.id ?? '',
+    })
     setTabs([tab])
     setActiveTabId(tab.id)
-    setPreviewExpanded(false)
-    setActiveReportId(null)
-    setIsPublished(false)
-    setReportName('Untitled report')
-    setReportDescription('')
-    setReportCategory('GENERAL')
-    if (dataSources.length > 0) {
-      setSelectedDataSourceId(dataSources[0].id)
-    }
-    setSavedSnapshot(null)
     setBannerSuccess('')
     setBannerError('')
-    setSearchParams({}, { replace: true })
+    syncUrlForTab(tab)
   }
 
-  async function handleSelectReport(report: SavedReportSummary) {
+  function handleSelectReport(report: SavedReportSummary) {
     const existingTab = tabs.find((t) => t.savedReportId === report.id)
     if (existingTab) {
-      setActiveTabId(existingTab.id)
-      try {
-        await syncReportContextForTab(existingTab)
-      } catch (err) {
-        setBannerError(err instanceof Error ? err.message : 'Failed to load report')
-      }
+      handleSelectTab(existingTab.id)
       return
     }
 
@@ -391,68 +302,60 @@ export function ReportBuilder() {
     )
   }
 
-  async function handleSelectTab(tabId: string) {
+  function handleSelectTab(tabId: string) {
     setActiveTabId(tabId)
     const tab = tabs.find((t) => t.id === tabId)
-    if (!tab) return
-
-    if (!tab.savedReportId) {
-      setActiveReportId(null)
-      setReportName('Untitled report')
-      setReportDescription('')
-      setReportCategory('GENERAL')
-      setSavedSnapshot(null)
-      setSearchParams({}, { replace: true })
-      return
-    }
-
-    try {
-      await syncReportContextForTab(tab)
-    } catch (err) {
-      setBannerError(err instanceof Error ? err.message : 'Failed to load report')
-    }
+    if (tab) syncUrlForTab(tab)
   }
 
   function handleAddTab() {
-    const tab = createQueryTab(
-      '',
-      duplicateTabTitle(
+    const tab = createQueryTab({
+      title: duplicateTabTitle(
         tabs.map((t) => t.title),
         'New query',
       ),
-    )
+      dataSourceId: dataSources[0]?.id ?? activeTab.dataSourceId,
+    })
     setTabs((prev) => [...prev, tab])
     setActiveTabId(tab.id)
+    syncUrlForTab(tab)
   }
 
   function handleCloseTab(id: string) {
     if (tabs.length <= 1) return
-    const closing = tabs.find((t) => t.id === id)
     const idx = tabs.findIndex((t) => t.id === id)
     const next = tabs.filter((t) => t.id !== id)
     setTabs(next)
     if (activeTabId === id) {
       const fallback = next[Math.max(0, idx - 1)] ?? next[0]
       setActiveTabId(fallback.id)
-      void handleSelectTab(fallback.id)
-    } else if (
-      closing?.savedReportId &&
-      closing.savedReportId === activeReportId &&
-      !next.some((t) => t.savedReportId === closing.savedReportId)
-    ) {
-      setActiveReportId(null)
-      setReportName('Untitled report')
-      setReportDescription('')
-      setReportCategory('GENERAL')
-      setSavedSnapshot(null)
-      setSearchParams({}, { replace: true })
+      syncUrlForTab(fallback)
     }
   }
 
-  function closePreview() {
-    updateActiveTab({ previewOpen: false })
-    setPreviewExpanded(false)
-  }
+  const insertSqlFragment = useCallback(
+    (fragment: string, mode: SqlInsertMode = 'append') => {
+      const normalizedFragment = fragment.trim()
+      if (mode === 'line1') {
+        const rest = activeTab.sql.trim()
+        updateActiveTab({
+          sql: rest ? `${normalizedFragment}\n${activeTab.sql.trimEnd()}` : normalizedFragment,
+        })
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => sqlEditorRef.current?.focusAtStart())
+        })
+        return
+      }
+
+      const trimmed = activeTab.sql.trim()
+      updateActiveTab({
+        sql: trimmed ? `${trimmed}\n${fragment}` : fragment,
+      })
+    },
+    [activeTab.sql, updateActiveTab],
+  )
+
+  const activeDataSource = dataSources.find((d) => d.id === activeTab.dataSourceId)
 
   async function handleSaveConfirm(data: {
     name: string
@@ -469,20 +372,28 @@ export function ReportBuilder() {
         category: data.category,
         sql: activeTab.sql,
         visualization: activeTab.visualization,
-        dataSourceId: selectedDataSourceId,
+        dataSourceId: activeTab.dataSourceId,
       }
 
-      let saved: SavedReportDetail
-      if (activeReportId) {
-        saved = await reportsApi.update(accessToken, activeReportId, payload)
-        setBannerSuccess(`Report "${saved.name}" updated`)
-      } else {
-        saved = await reportsApi.create(accessToken, payload)
-        setBannerSuccess(`Report "${saved.name}" saved`)
+      const saved = activeReportId
+        ? await reportsApi.update(accessToken, activeReportId, payload)
+        : await reportsApi.create(accessToken, payload)
+
+      setBannerSuccess(
+        activeReportId
+          ? `Report "${saved.name}" updated`
+          : `Report "${saved.name}" saved`,
+      )
+
+      const snapshot: QueryEditorSnapshot = {
+        name: saved.name,
+        description: saved.description ?? '',
+        category: saved.category,
+        sql: saved.sql,
+        visualization: saved.visualization,
+        dataSourceId: saved.dataSourceId,
       }
 
-      setReportContext(saved)
-      setIsPublished(saved.isPublished)
       setTabs((prev) =>
         prev.map((t) =>
           t.id === activeTabId
@@ -490,12 +401,19 @@ export function ReportBuilder() {
                 ...t,
                 savedReportId: saved.id,
                 title: saved.name,
+                name: saved.name,
+                description: saved.description ?? '',
+                category: saved.category,
+                dataSourceId: saved.dataSourceId,
+                isPublished: saved.isPublished,
+                savedSnapshot: snapshot,
                 sql: saved.sql,
                 visualization: saved.visualization,
               }
             : t,
         ),
       )
+      syncUrlForTab({ ...activeTab, savedReportId: saved.id })
       await loadSavedReports()
       setSaveModalOpen(false)
     } catch (err) {
@@ -513,27 +431,30 @@ export function ReportBuilder() {
       await reportsApi.delete(accessToken, pendingDelete.id)
       setBannerSuccess(`Report "${pendingDelete.name}" moved to trash`)
       const deletedId = pendingDelete.id
-      setTabs((prev) => {
-        const next = prev.filter((t) => t.savedReportId !== deletedId)
-        if (activeReportId === deletedId) {
-          if (next.length > 0) {
-            const fallback = next[0]
-            setActiveTabId(fallback.id)
-            void handleSelectTab(fallback.id)
-          } else {
-            const tab = createQueryTab('', 'Query 1')
-            setActiveTabId(tab.id)
-            setActiveReportId(null)
-            setReportName('Untitled report')
-            setReportDescription('')
-            setReportCategory('GENERAL')
-            setSavedSnapshot(null)
-            setSearchParams({}, { replace: true })
-            return [tab]
-          }
+      const nextTabs = tabs.filter((t) => t.savedReportId !== deletedId)
+      const finalTabs =
+        nextTabs.length === 0
+          ? [
+              createQueryTab({
+                title: 'Query 1',
+                dataSourceId: dataSources[0]?.id ?? '',
+              }),
+            ]
+          : nextTabs
+
+      if (activeTab.savedReportId === deletedId) {
+        if (nextTabs.length === 0) {
+          setActiveTabId(finalTabs[0].id)
+          syncUrlForTab(finalTabs[0])
+        } else {
+          const idx = tabs.findIndex((t) => t.id === activeTabId)
+          const fallback = nextTabs[Math.max(0, idx - 1)] ?? nextTabs[0]
+          setActiveTabId(fallback.id)
+          syncUrlForTab(fallback)
         }
-        return next
-      })
+      }
+
+      setTabs(finalTabs)
       await loadSavedReports()
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : 'Failed to delete report')
@@ -549,7 +470,7 @@ export function ReportBuilder() {
     setBannerError('')
     try {
       const saved = await reportsApi.publish(accessToken, activeReportId)
-      setIsPublished(saved.isPublished)
+      updateActiveTab({ isPublished: saved.isPublished })
       setBannerSuccess(
         `"${saved.name}" is published. In Roles, grant Reports view plus this report's view permission.`,
       )
@@ -568,7 +489,7 @@ export function ReportBuilder() {
     setBannerError('')
     try {
       const saved = await reportsApi.unpublish(accessToken, activeReportId)
-      setIsPublished(saved.isPublished)
+      updateActiveTab({ isPublished: saved.isPublished })
       setBannerSuccess(`"${saved.name}" is unpublished and hidden from the report catalog.`)
       await loadSavedReports()
     } catch (err) {
@@ -578,20 +499,6 @@ export function ReportBuilder() {
       setPendingUnpublish(false)
     }
   }
-
-  const activeDataSource = dataSources.find((d) => d.id === selectedDataSourceId)
-
-  const editorPaneClass = splitView
-    ? previewExpanded
-      ? 'h-[min(28%,200px)] shrink-0'
-      : 'min-h-0 flex-1'
-    : 'min-h-0 flex-1'
-
-  const previewPaneClass = splitView
-    ? previewExpanded
-      ? 'min-h-0 flex-[3]'
-      : 'min-h-0 flex-1'
-    : 'hidden'
 
   return (
     <div className="flex h-full flex-col">
@@ -604,7 +511,7 @@ export function ReportBuilder() {
             ? {
                 label: activeReportId ? 'Save changes' : 'Save report',
                 onClick: () => {
-                  if (!selectedDataSourceId) {
+                  if (!activeTab.dataSourceId) {
                     setBannerError('Select a data source before saving')
                     return
                   }
@@ -628,32 +535,33 @@ export function ReportBuilder() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <ReportBuilderSidebar
-          reports={savedReports}
-          activeReportId={activeReportId}
-          openReportIds={openReportIds}
-          loading={reportsLoading}
-          canEdit={canEdit}
-          canDelete={canDelete}
-          onSelect={handleSelectReport}
-          onNew={handleNewReport}
-          onDelete={setPendingDelete}
-        />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 flex-col lg:flex-row">
+          <ReportBuilderSidebar
+            reports={savedReports}
+            activeReportId={activeReportId}
+            openReportIds={openReportIds}
+            loading={reportsLoading}
+            canEdit={canEdit}
+            canDelete={canDelete}
+            onSelect={handleSelectReport}
+            onNew={handleNewReport}
+            onDelete={setPendingDelete}
+          />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-primary">
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-bg-secondary px-4 py-2.5">
-            <div className="min-w-0">
+          <div className="flex min-w-0 flex-1 flex-col bg-bg-primary">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-bg-secondary px-4 py-2.5">
+              <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-base font-semibold text-text-primary">
-                  {reportName}
+                  {activeTab.name}
                 </h1>
                 {isDirty ? (
                   <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
                     Unsaved
                   </span>
                 ) : activeReportId ? (
-                  isPublished ? (
+                  activeTab.isPublished ? (
                     <span className="rounded-full bg-brand-blue/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-blue">
                       Published
                     </span>
@@ -677,13 +585,11 @@ export function ReportBuilder() {
                     )}
                   </>
                 )}
-                {' '}
-                · Active tab: {activeTab.title}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {canEdit && activeReportId && !isDirty && (
-                isPublished ? (
+                activeTab.isPublished ? (
                   <button
                     type="button"
                     onClick={() => setPendingUnpublish(true)}
@@ -706,8 +612,8 @@ export function ReportBuilder() {
                 )
               )}
               <select
-                value={selectedDataSourceId}
-                onChange={(e) => setSelectedDataSourceId(e.target.value)}
+                value={activeTab.dataSourceId}
+                onChange={(e) => updateActiveTab({ dataSourceId: e.target.value })}
                 disabled={dataSources.length === 0}
                 className="min-w-[160px] rounded-sm border border-border bg-bg-primary px-2 py-1.5 text-sm outline-none focus:border-brand-blue"
               >
@@ -725,7 +631,7 @@ export function ReportBuilder() {
                 variant="secondary"
                 className="px-3 py-1.5 text-xs"
                 loading={isRunning}
-                disabled={!selectedDataSourceId || !activeTab.sql.trim()}
+                disabled={!activeTab.dataSourceId || !activeTab.sql.trim()}
                 onClick={runQuery}
               >
                 {!isRunning && <i className="ti ti-player-play"></i>}
@@ -733,13 +639,12 @@ export function ReportBuilder() {
               </LoadingButton>
               <span className="hidden text-[10px] text-text-secondary lg:inline">⌘↵</span>
             </div>
-          </div>
+            </div>
 
-          <div className="flex min-h-0 flex-1 flex-col">
             <QueryTabBar
               tabs={tabs}
               activeTabId={activeTabId}
-              onSelect={(id) => void handleSelectTab(id)}
+              onSelect={handleSelectTab}
               onAdd={handleAddTab}
               onClose={handleCloseTab}
             />
@@ -753,46 +658,40 @@ export function ReportBuilder() {
               onDateFiltersChange={setDateFilters}
             />
 
-            <div className="flex min-h-0 flex-1 flex-col">
-              <div className={`flex flex-col overflow-hidden ${editorPaneClass}`}>
-                <div className="flex min-h-0 flex-1 flex-col bg-[#1e1e1e] p-4 text-[#d4d4d4]">
-                  {!splitView && (
-                    <p className="mb-2 shrink-0 text-[11px] text-[#858585]">
-                      Write SQL below, then run query to open split preview.
-                    </p>
-                  )}
-                  <SqlEditor
-                    value={activeTab.sql}
-                    onChange={(sql) => updateActiveTab({ sql })}
-                    minHeight={splitView && !previewExpanded ? '100%' : '320px'}
-                  />
-                </div>
-              </div>
-
-              {splitView && (
-                <>
-                  <div className="relative shrink-0 border-y border-border bg-border">
-                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-bg-secondary px-2 py-0.5 text-[10px] text-text-secondary">
-                      {previewExpanded ? 'Expanded preview' : 'Split view'}
-                    </div>
-                  </div>
-                  <div className={previewPaneClass}>
-                    <ReportPreviewPanel
-                      visualization={activeTab.visualization}
-                      onVisualizationChange={(v) => updateActiveTab({ visualization: v })}
-                      queryResult={activeTab.queryResult}
-                      queryError={activeTab.queryError}
-                      isRunning={isRunning}
-                      chartData={chartData}
-                      pieData={pieData}
-                      previewExpanded={previewExpanded}
-                      onToggleExpand={() => setPreviewExpanded((e) => !e)}
-                      onClosePreview={closePreview}
-                    />
-                  </div>
-                </>
-              )}
+            <div className="shrink-0 bg-[#1e1e1e] px-4 pb-2 pt-2 text-[#d4d4d4]">
+              <p className="mb-1.5 text-[11px] text-[#858585]">
+                SQL editor · scroll inside the editor for longer queries
+              </p>
+              <SqlEditor
+                ref={sqlEditorRef}
+                value={activeTab.sql}
+                onChange={(sql) => updateActiveTab({ sql })}
+                visibleLines={25}
+              />
             </div>
+          </div>
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-[minmax(260px,32%)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+          <div className="flex min-h-0 min-w-0 flex-col bg-bg-primary">
+            {accessToken && (
+              <DatabaseTableExplorer
+                accessToken={accessToken}
+                dataSourceId={activeTab.dataSourceId}
+                onInsertFragment={insertSqlFragment}
+              />
+            )}
+          </div>
+          <div className="flex min-h-0 min-w-0 flex-col bg-bg-tertiary">
+            <ReportBuilderQueryPreview
+              visualization={activeTab.visualization}
+              onVisualizationChange={(v) => updateActiveTab({ visualization: v })}
+              queryResult={activeTab.queryResult}
+              queryError={activeTab.queryError}
+              isRunning={isRunning}
+              chartData={chartData}
+              pieData={pieData}
+            />
           </div>
         </div>
       </div>
@@ -800,9 +699,9 @@ export function ReportBuilder() {
       <ReportSaveModal
         open={saveModalOpen}
         title={activeReportId ? 'Save report changes' : 'Save new report'}
-        initialName={reportName === 'Untitled report' ? '' : reportName}
-        initialDescription={reportDescription}
-        initialCategory={reportCategory}
+        initialName={activeTab.name === 'Untitled report' ? '' : activeTab.name}
+        initialDescription={activeTab.description}
+        initialCategory={activeTab.category}
         loading={isSaving}
         onConfirm={handleSaveConfirm}
         onCancel={() => setSaveModalOpen(false)}
@@ -811,7 +710,7 @@ export function ReportBuilder() {
       <ConfirmModal
         open={pendingPublish}
         title="Publish report?"
-        message={`Publish "${reportName}"? Per-report view permissions will appear in Roles under Reports. Users need Reports view and this report's view to open it.`}
+        message={`Publish "${activeTab.name}"? Per-report view permissions will appear in Roles under Reports. Users need Reports view and this report's view to open it.`}
         confirmLabel="Publish"
         loading={publishLoading}
         onConfirm={confirmPublish}
@@ -821,7 +720,7 @@ export function ReportBuilder() {
       <ConfirmModal
         open={pendingUnpublish}
         title="Unpublish report?"
-        message={`Unpublish "${reportName}"? It will be removed from the report catalog and role permissions for this report.`}
+        message={`Unpublish "${activeTab.name}"? It will be removed from the report catalog and role permissions for this report.`}
         confirmLabel="Unpublish"
         variant="danger"
         loading={publishLoading}

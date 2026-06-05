@@ -84,12 +84,59 @@ export interface UpdateSchedulePayload {
   timezoneOffsetMinutes?: number
 }
 
+export interface StatementScheduleSummary {
+  id: string
+  statementId: string
+  statementName: string
+  groupId: string
+  groupName: string
+  recipientCount: number
+  recurrence: ReportScheduleRecurrence
+  recurrenceLabel: string
+  scheduledAt: string
+  timeMinutes: number | null
+  dayOfWeek: number | null
+  dayOfMonth: number | null
+  timezoneOffsetMinutes: number
+  status: ReportScheduleStatus
+  lastSentAt: string | null
+  lastError: string | null
+  createdByUsername: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SchedulableStatementOption {
+  id: string
+  name: string
+  type: string
+  category: string
+  updatedAt: string
+}
+
+export interface CreateStatementSchedulePayload {
+  statementId: string
+  groupId: string
+  recurrence: ReportScheduleRecurrence
+  scheduledAt?: string
+  timeMinutes?: number
+  dayOfWeek?: number
+  dayOfMonth?: number
+  timezoneOffsetMinutes: number
+}
+
 export const schedulesApi = {
   list: (token: string) =>
     schedulesFetch<ReportScheduleSummary[]>('/', token),
 
   listReports: (token: string) =>
     schedulesFetch<SchedulableReportOption[]>('/reports', token),
+
+  listStatementSchedules: (token: string) =>
+    schedulesFetch<StatementScheduleSummary[]>('/statements', token),
+
+  listStatementOptions: (token: string) =>
+    schedulesFetch<SchedulableStatementOption[]>('/statement-options', token),
 
   listGroups: (token: string) =>
     schedulesFetch<ScheduleGroupOption[]>('/groups', token),
@@ -100,12 +147,27 @@ export const schedulesApi = {
       body: JSON.stringify(data),
     }),
 
+  createStatement: (token: string, data: CreateStatementSchedulePayload) =>
+    schedulesFetch<StatementScheduleSummary>('/statements', token, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   update: (token: string, id: string, data: UpdateSchedulePayload) =>
     schedulesFetch<ReportScheduleSummary>(`/${id}`, token, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
+  updateStatement: (token: string, id: string, data: UpdateSchedulePayload) =>
+    schedulesFetch<StatementScheduleSummary>(`/statements/${id}`, token, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   remove: (token: string, id: string) =>
     schedulesFetch<void>(`/${id}`, token, { method: 'DELETE' }),
+
+  removeStatement: (token: string, id: string) =>
+    schedulesFetch<void>(`/statements/${id}`, token, { method: 'DELETE' }),
 }

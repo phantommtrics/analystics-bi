@@ -121,6 +121,8 @@ async function deliverSchedule(schedule: {
       scheduledAt: schedule.scheduledAt,
       timezoneOffsetMinutes: schedule.timezoneOffsetMinutes,
       recurrence: schedule.recurrence,
+      dayOfWeek: schedule.dayOfWeek,
+      dayOfMonth: schedule.dayOfMonth,
     })
     filterLabel = bundle.filterLabel
     attachments = bundle.attachments.map((file) => ({

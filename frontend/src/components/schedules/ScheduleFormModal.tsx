@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   CreateSchedulePayload,
+  CreateStatementSchedulePayload,
   ReportScheduleSummary,
   ScheduleGroupOption,
   SchedulableReportOption,
+  SchedulableStatementOption,
+  StatementScheduleSummary,
 } from '../../api/schedules'
 import {
   RECURRENCE_OPTIONS,
@@ -15,17 +18,33 @@ import {
   toDatetimeLocalValue,
   type ReportScheduleRecurrence,
 } from '../../lib/scheduleRecurrence'
+import { categoryMeta } from '../../lib/reportConstants'
+import { statementTypeMeta } from '../../lib/statementConstants'
+import type { StatementType } from '../../lib/statementConfig'
 import { LoadingButton } from '../ui/LoadingButton'
+import { SearchableSelect } from '../ui/SearchableSelect'
+
+export type ScheduleKind = 'report' | 'statement'
+
+export type ScheduleFormSubmit =
+  | { kind: 'report'; data: CreateSchedulePayload }
+  | { kind: 'statement'; data: CreateStatementSchedulePayload }
+
+function isReportSchedule(
+  initial: ReportScheduleSummary | StatementScheduleSummary | null | undefined,
+): initial is ReportScheduleSummary {
+  return initial != null && 'reportId' in initial
+}
 
 interface ScheduleFormModalProps {
   open: boolean
   title: string
   reports: SchedulableReportOption[]
+  statements: SchedulableStatementOption[]
   groups: ScheduleGroupOption[]
   loading?: boolean
-  initial?: ReportScheduleSummary | null
-  lockReportAndGroup?: boolean
-  onConfirm: (data: CreateSchedulePayload) => void
+  initial?: ReportScheduleSummary | StatementScheduleSummary | null
+  onConfirm: (payload: ScheduleFormSubmit) => void
   onCancel: () => void
 }
 
@@ -33,32 +52,39 @@ export function ScheduleFormModal({
   open,
   title,
   reports,
+  statements,
   groups,
   loading = false,
   initial = null,
-  lockReportAndGroup = false,
   onConfirm,
   onCancel,
 }: ScheduleFormModalProps) {
-  const [reportId, setReportId] = useState(initial?.reportId ?? '')
-  const [groupId, setGroupId] = useState(initial?.groupId ?? '')
-  const [recurrence, setRecurrence] = useState<ReportScheduleRecurrence>(
-    initial?.recurrence ?? 'ONCE',
-  )
-  const [scheduledAtLocal, setScheduledAtLocal] = useState(() =>
-    toDatetimeLocalValue(initial?.scheduledAt),
-  )
-  const [timeLocal, setTimeLocal] = useState(() =>
-    initial?.timeMinutes != null
-      ? `${String(Math.floor(initial.timeMinutes / 60)).padStart(2, '0')}:${String(initial.timeMinutes % 60).padStart(2, '0')}`
-      : defaultTimeValue(),
-  )
-  const [dayOfWeek, setDayOfWeek] = useState(initial?.dayOfWeek ?? 1)
-  const [dayOfMonth, setDayOfMonth] = useState(initial?.dayOfMonth ?? 1)
+  const editingKind: ScheduleKind | null = initial
+    ? isReportSchedule(initial)
+      ? 'report'
+      : 'statement'
+    : null
+  const lockTargetAndGroup = editingKind != null
+
+  const [scheduleKind, setScheduleKind] = useState<ScheduleKind>('report')
+  const [reportId, setReportId] = useState('')
+  const [statementId, setStatementId] = useState('')
+  const [groupId, setGroupId] = useState('')
+  const [recurrence, setRecurrence] = useState<ReportScheduleRecurrence>('ONCE')
+  const [scheduledAtLocal, setScheduledAtLocal] = useState('')
+  const [timeLocal, setTimeLocal] = useState(defaultTimeValue())
+  const [dayOfWeek, setDayOfWeek] = useState(1)
+  const [dayOfMonth, setDayOfMonth] = useState(1)
 
   useEffect(() => {
     if (!open) return
-    setReportId(initial?.reportId ?? '')
+
+    const kind = editingKind ?? 'report'
+    setScheduleKind(kind)
+    setReportId(isReportSchedule(initial) ? initial.reportId : '')
+    setStatementId(
+      initial && !isReportSchedule(initial) ? initial.statementId : '',
+    )
     setGroupId(initial?.groupId ?? '')
     setRecurrence(initial?.recurrence ?? 'ONCE')
     setScheduledAtLocal(toDatetimeLocalValue(initial?.scheduledAt))
@@ -71,44 +97,99 @@ export function ScheduleFormModal({
     )
     setDayOfWeek(initial?.dayOfWeek ?? 1)
     setDayOfMonth(initial?.dayOfMonth ?? 1)
-  }, [open, initial])
+  }, [open, initial, editingKind])
+
+  const reportOptions = useMemo(
+    () =>
+      reports.map((report) => ({
+        id: report.id,
+        label: report.name,
+        description: categoryMeta[report.category as keyof typeof categoryMeta]?.label ?? report.category,
+      })),
+    [reports],
+  )
+
+  const statementOptions = useMemo(
+    () =>
+      statements.map((statement) => {
+        const meta = statementTypeMeta(statement.type as StatementType)
+        return {
+          id: statement.id,
+          label: statement.name,
+          description: meta.label,
+        }
+      }),
+    [statements],
+  )
+
+  const groupOptions = useMemo(
+    () =>
+      groups.map((group) => ({
+        id: group.id,
+        label: group.name,
+        description: [
+          `${group.memberCount} member${group.memberCount === 1 ? '' : 's'}`,
+          group.description,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      })),
+    [groups],
+  )
 
   if (!open) return null
 
+  const activeKind = editingKind ?? scheduleKind
   const selectedGroup = groups.find((g) => g.id === groupId)
   const isOnce = recurrence === 'ONCE'
+  const targetSelected =
+    activeKind === 'report' ? reportId.length > 0 : statementId.length > 0
 
   const canSubmit =
-    reportId.length > 0 &&
+    targetSelected &&
     groupId.length > 0 &&
     (selectedGroup?.memberCount ?? 0) > 0 &&
     (isOnce ? scheduledAtLocal.length > 0 : timeLocal.length > 0)
 
-  function buildPayload(): CreateSchedulePayload {
+  function buildRecurrenceFields() {
     const timezoneOffsetMinutes = clientTimezoneOffsetMinutes()
-    const base = {
-      reportId,
-      groupId,
-      recurrence,
-      timezoneOffsetMinutes,
-    }
-
     if (isOnce) {
       return {
-        ...base,
+        recurrence,
+        timezoneOffsetMinutes,
         scheduledAt: datetimeLocalToIso(scheduledAtLocal),
       }
     }
 
     const timeMinutes = parseTimeInput(timeLocal)
     if (recurrence === 'DAILY') {
-      return { ...base, timeMinutes }
+      return { recurrence, timezoneOffsetMinutes, timeMinutes }
     }
     if (recurrence === 'WEEKLY') {
-      return { ...base, timeMinutes, dayOfWeek }
+      return { recurrence, timezoneOffsetMinutes, timeMinutes, dayOfWeek }
     }
-    return { ...base, timeMinutes, dayOfMonth }
+    return { recurrence, timezoneOffsetMinutes, timeMinutes, dayOfMonth }
   }
+
+  function handleSubmit() {
+    const recurrenceFields = buildRecurrenceFields()
+    if (activeKind === 'report') {
+      onConfirm({
+        kind: 'report',
+        data: { reportId, groupId, ...recurrenceFields },
+      })
+      return
+    }
+    onConfirm({
+      kind: 'statement',
+      data: { statementId, groupId, ...recurrenceFields },
+    })
+  }
+
+  const description =
+    activeKind === 'report'
+      ? 'Recipients receive an email with a link to open the report, plus PDF and CSV exports for the completed period before each run (previous day, week, or month).'
+      : 'Recipients receive an email with a link to open the statement, plus PDF and CSV exports for the completed period before each run (previous day, week, or month).'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -124,45 +205,103 @@ export function ScheduleFormModal({
         className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border bg-bg-primary p-6 shadow-xl"
       >
         <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
-        <p className="mt-1 text-sm text-text-secondary">
-          Recipients receive an email with a link to open the report. Times use your browser&apos;s
-          local timezone. Recipients receive PDF and CSV exports for each run, filtered to the
-          schedule date.
-        </p>
+        <p className="mt-1 text-sm text-text-secondary">{description}</p>
 
         <div className="mt-5 space-y-4">
-          <div>
-            <label className="mb-1.5 block text-sm font-medium">Report</label>
-            <select
-              value={reportId}
-              disabled={lockReportAndGroup}
-              onChange={(e) => setReportId(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue disabled:opacity-60"
-            >
-              <option value="">Select a published report…</option>
-              {reports.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!lockTargetAndGroup && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Schedule type</label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label
+                  className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2.5 text-sm transition-colors ${
+                    scheduleKind === 'report'
+                      ? 'border-brand-blue bg-brand-blue/5'
+                      : 'border-border hover:border-brand-blue/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="schedule-kind"
+                    value="report"
+                    checked={scheduleKind === 'report'}
+                    onChange={() => setScheduleKind('report')}
+                    className="accent-brand-blue"
+                  />
+                  <span>
+                    <span className="font-medium text-text-primary">Report</span>
+                    <span className="mt-0.5 block text-xs text-text-secondary">
+                      Email a published report
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2.5 text-sm transition-colors ${
+                    scheduleKind === 'statement'
+                      ? 'border-brand-blue bg-brand-blue/5'
+                      : 'border-border hover:border-brand-blue/40'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="schedule-kind"
+                    value="statement"
+                    checked={scheduleKind === 'statement'}
+                    onChange={() => setScheduleKind('statement')}
+                    className="accent-brand-blue"
+                  />
+                  <span>
+                    <span className="font-medium text-text-primary">Statement</span>
+                    <span className="mt-0.5 block text-xs text-text-secondary">
+                      Email a published statement
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {activeKind === 'report' ? (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Report</label>
+              <SearchableSelect
+                options={reportOptions}
+                value={reportId || null}
+                onChange={(next) => setReportId(next ?? '')}
+                placeholder="Select a published report…"
+                searchPlaceholder="Search reports..."
+                emptyMessage="No reports found"
+                maxVisibleItems={5}
+                disabled={lockTargetAndGroup}
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Statement</label>
+              <SearchableSelect
+                options={statementOptions}
+                value={statementId || null}
+                onChange={(next) => setStatementId(next ?? '')}
+                placeholder="Select a published statement…"
+                searchPlaceholder="Search statements..."
+                emptyMessage="No statements found"
+                maxVisibleItems={5}
+                disabled={lockTargetAndGroup}
+              />
+            </div>
+          )}
 
           <div>
             <label className="mb-1.5 block text-sm font-medium">Recipient group</label>
-            <select
-              value={groupId}
-              disabled={lockReportAndGroup}
-              onChange={(e) => setGroupId(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue disabled:opacity-60"
-            >
-              <option value="">Select a user group…</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name} ({g.memberCount} member{g.memberCount === 1 ? '' : 's'})
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              options={groupOptions}
+              value={groupId || null}
+              onChange={(next) => setGroupId(next ?? '')}
+              placeholder="Select a user group…"
+              searchPlaceholder="Search groups..."
+              emptyMessage="No groups found"
+              maxVisibleItems={5}
+              disabled={lockTargetAndGroup}
+            />
           </div>
 
           <div>
@@ -253,7 +392,7 @@ export function ScheduleFormModal({
                 </div>
               )}
 
-              {!lockReportAndGroup && (
+              {!lockTargetAndGroup && (
                 <p className="rounded-md border border-border bg-bg-secondary px-3 py-2 text-xs text-text-secondary">
                   The first email goes out at the next matching date and time after you save.
                 </p>
@@ -266,11 +405,7 @@ export function ScheduleFormModal({
           <LoadingButton variant="secondary" onClick={onCancel} disabled={loading}>
             Cancel
           </LoadingButton>
-          <LoadingButton
-            loading={loading}
-            disabled={!canSubmit}
-            onClick={() => onConfirm(buildPayload())}
-          >
+          <LoadingButton loading={loading} disabled={!canSubmit} onClick={handleSubmit}>
             Save schedule
           </LoadingButton>
         </div>

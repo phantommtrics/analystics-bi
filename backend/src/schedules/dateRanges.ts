@@ -1,4 +1,12 @@
+import { ReportScheduleRecurrence } from '@prisma/client'
+
 export type DateRange = { dateFrom: string; dateTo: string }
+
+export type ScheduleDateRangeInput = {
+  anchorIso: string
+  recurrence: ReportScheduleRecurrence
+  dayOfMonth?: number | null
+}
 
 function parseIsoDate(iso: string): Date {
   return new Date(`${iso}T12:00:00`)
@@ -11,35 +19,54 @@ export function formatIsoDate(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
-function startOfWeekMonday(date: Date): Date {
-  const d = new Date(date)
-  const day = d.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  d.setDate(d.getDate() + diff)
-  return d
+function addDays(iso: string, days: number): string {
+  const d = parseIsoDate(iso)
+  d.setDate(d.getDate() + days)
+  return formatIsoDate(d)
 }
 
-function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1)
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate()
 }
 
-/** Date range for a scheduled report, anchored to the schedule's local calendar day. */
-export function dateRangeEndingOnAnchor(anchorIso: string, kind: 'day' | 'week' | 'month'): DateRange {
+function previousMonthSameDay(anchorIso: string, dayOfMonth: number): string {
   const anchor = parseIsoDate(anchorIso)
+  let year = anchor.getFullYear()
+  let month = anchor.getMonth() + 1
 
-  if (kind === 'day') {
+  month -= 1
+  if (month < 1) {
+    month = 12
+    year -= 1
+  }
+
+  const day = Math.min(dayOfMonth, daysInMonth(year, month))
+  return formatIsoDate(new Date(year, month - 1, day))
+}
+
+/** Date range for a scheduled report, using the period before the schedule run (n-1). */
+export function scheduleReportDateRange(input: ScheduleDateRangeInput): DateRange {
+  const { anchorIso, recurrence, dayOfMonth } = input
+
+  if (recurrence === ReportScheduleRecurrence.ONCE) {
     return { dateFrom: anchorIso, dateTo: anchorIso }
   }
 
-  if (kind === 'week') {
+  if (recurrence === ReportScheduleRecurrence.DAILY) {
+    const previous = addDays(anchorIso, -1)
+    return { dateFrom: previous, dateTo: previous }
+  }
+
+  if (recurrence === ReportScheduleRecurrence.WEEKLY) {
     return {
-      dateFrom: formatIsoDate(startOfWeekMonday(anchor)),
-      dateTo: anchorIso,
+      dateFrom: addDays(anchorIso, -7),
+      dateTo: addDays(anchorIso, -1),
     }
   }
 
+  const dom = dayOfMonth ?? parseIsoDate(anchorIso).getDate()
   return {
-    dateFrom: formatIsoDate(startOfMonth(anchor)),
-    dateTo: anchorIso,
+    dateFrom: previousMonthSameDay(anchorIso, dom),
+    dateTo: addDays(anchorIso, -1),
   }
 }

@@ -118,13 +118,14 @@ export const reportsApi = {
     token: string,
     id: string,
     filters?: Record<string, string>,
-    options?: { dashboardId?: string },
+    options?: { dashboardId?: string; statementId?: string },
   ) =>
     reportsFetch<QueryExecuteResult>(`/${id}/execute`, token, {
       method: 'POST',
       body: JSON.stringify({
         filters: filters ?? {},
         ...(options?.dashboardId ? { dashboardId: options.dashboardId } : {}),
+        ...(options?.statementId ? { statementId: options.statementId } : {}),
       }),
     }),
 }

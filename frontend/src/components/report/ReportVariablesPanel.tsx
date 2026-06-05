@@ -1,11 +1,7 @@
 import { useMemo, useState } from 'react'
-import { DateRangeFilterPicker } from '../shared/DateRangeFilterPicker'
 import type { DashboardFilters } from '../../lib/dashboardFilters'
-import {
-  formatVariableLabel,
-  isDateVariable,
-  SQL_VARIABLE_HINT,
-} from '../../lib/sqlVariables'
+import { isDateVariable } from '../../lib/sqlVariables'
+import { ReportFilterFields } from '../shared/ReportFilterFields'
 
 interface ReportVariablesPanelProps {
   variables: string[]
@@ -15,7 +11,6 @@ interface ReportVariablesPanelProps {
   onVariableChange: (name: string, value: string) => void
   onDateFiltersChange: (filters: DashboardFilters) => void
   compact?: boolean
-  /** When true, date range is controlled from the page TopBar instead. */
   hideDateFilter?: boolean
 }
 
@@ -31,12 +26,12 @@ export function ReportVariablesPanel({
 }: ReportVariablesPanelProps) {
   const [expanded, setExpanded] = useState(true)
 
-  const customVariables = useMemo(
-    () => variables.filter((v) => !isDateVariable(v)),
+  const hasCustomVariables = useMemo(
+    () => variables.some((token) => !isDateVariable(token)),
     [variables],
   )
 
-  if (hideDateFilter && customVariables.length === 0) {
+  if (hideDateFilter && !hasCustomVariables) {
     return null
   }
 
@@ -47,7 +42,9 @@ export function ReportVariablesPanel({
       >
         <p className="text-[11px] text-text-secondary">
           No variables in SQL. Add placeholders like{' '}
-          <code className="rounded bg-bg-primary px-1">:dateFrom</code> to filter results.
+          <code className="rounded bg-bg-primary px-1">:dateFrom</code>,{' '}
+          <code className="rounded bg-bg-primary px-1">:status?</code>, or{' '}
+          <code className="rounded bg-bg-primary px-1">:region[]</code>.
         </p>
       </div>
     )
@@ -75,41 +72,18 @@ export function ReportVariablesPanel({
       </button>
 
       {expanded && (
-        <div className={`space-y-3 border-t border-border ${compact ? 'px-3 py-2' : 'px-4 py-3'}`}>
-          {hasDateVariables && !hideDateFilter && (
-            <DateRangeFilterPicker
-              filters={dateFilters}
-              onChange={onDateFiltersChange}
-              hint="Choose a range before running the query. Select “No filter” to skip loading data."
-            />
-          )}
-
-          {customVariables.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-text-secondary">
-                Parameters
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {customVariables.map((name) => (
-                  <label
-                    key={name}
-                    className="min-w-[120px] flex-1 text-[11px] text-text-secondary"
-                  >
-                    {formatVariableLabel(name)}
-                    <input
-                      type="text"
-                      value={values[name] ?? ''}
-                      onChange={(e) => onVariableChange(name, e.target.value)}
-                      placeholder={`:${name}`}
-                      className="mt-0.5 block w-full rounded-sm border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary"
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <p className="text-[10px] text-text-secondary">{SQL_VARIABLE_HINT}</p>
+        <div className={`border-t border-border ${compact ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <ReportFilterFields
+            variables={variables}
+            values={values}
+            hasDateVariables={hasDateVariables}
+            dateFilters={dateFilters}
+            onVariableChange={onVariableChange}
+            onDateFiltersChange={onDateFiltersChange}
+            hideDateFilter={hideDateFilter}
+            dateHint="Choose a range before running the query. Select “No filter” to skip loading data."
+            showHint
+          />
         </div>
       )}
     </div>

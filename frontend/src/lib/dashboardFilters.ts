@@ -1,5 +1,5 @@
 import type { UserType } from '../auth/types'
-import { expandQueryFilters } from './sqlVariables'
+import { expandQueryFilters, formatVariableLabel, isDateVariable } from './sqlVariables'
 import {
   currentMonthRange,
   currentQuarterRange,
@@ -206,6 +206,28 @@ export function canViewCustomDashboard(
   if (!hasDashboardParentView(permissions)) return false
   if (userType === 'OWNER' || permissions.includes('*')) return true
   return hasExplicitPermission(permissions, dashboardModuleKey(dashboardId), 'view')
+}
+
+export function formatQueryFiltersLabel(
+  dateFilters: DashboardFilters,
+  options?: {
+    hasDateVariables?: boolean
+    variables?: string[]
+    values?: Record<string, string>
+  },
+): string {
+  const parts: string[] = []
+  if (options?.hasDateVariables) {
+    parts.push(formatFilterLabel(dateFilters))
+  }
+  for (const name of options?.variables ?? []) {
+    if (isDateVariable(name)) continue
+    const value = options?.values?.[name]?.trim()
+    if (!value) continue
+    parts.push(`${formatVariableLabel(name)}: ${value}`)
+  }
+  if (parts.length === 0) return 'No filters'
+  return parts.join(' · ')
 }
 
 export function formatFilterLabel(filters: DashboardFilters): string {

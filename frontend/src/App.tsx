@@ -16,7 +16,9 @@ import { Customers } from './pages/Customers'
 import { Dashboard } from './pages/Dashboard'
 import { CustomDashboard } from './pages/CustomDashboard'
 import { DashboardBuilder } from './pages/DashboardBuilder'
-import { FinancialStatements } from './pages/FinancialStatements'
+import { CustomStatement } from './pages/CustomStatement'
+import { StatementBuilder } from './pages/StatementBuilder'
+import { StatementCatalog } from './pages/StatementCatalog'
 import { Reconciliation } from './pages/Reconciliation'
 import { Remittance } from './pages/Remittance'
 import { ReportBuilder } from './pages/ReportBuilder'
@@ -55,7 +57,16 @@ export function App() {
               path="/statements"
               element={
                 <RequirePermission moduleKey="statements">
-                  <FinancialStatements />
+                  <StatementCatalog />
+                </RequirePermission>
+              }
+            />
+            <Route path="/statements/:id" element={<CustomStatement />} />
+            <Route
+              path="/statement-builder"
+              element={
+                <RequirePermission moduleKey="statement-builder">
+                  <StatementBuilder />
                 </RequirePermission>
               }
             />

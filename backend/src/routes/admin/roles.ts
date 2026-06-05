@@ -17,6 +17,11 @@ import {
   ensureAllReportPermissions,
   listCatalogReportModuleKeys,
 } from '../../reports/permissions.js'
+import {
+  CUSTOM_STATEMENT_ACTIONS,
+  ensureAllStatementPermissions,
+  listCatalogStatementModuleKeys,
+} from '../../statements/permissions.js'
 import { paramId } from '../../utils/params.js'
 
 export const rolesRouter = Router()
@@ -38,12 +43,17 @@ const setPermissionsSchema = z.object({
 })
 
 rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (_req, res) => {
-  await Promise.all([ensureAllDashboardPermissions(), ensureAllReportPermissions()])
+  await Promise.all([
+    ensureAllDashboardPermissions(),
+    ensureAllReportPermissions(),
+    ensureAllStatementPermissions(),
+  ])
   const [
     permissions,
     mainMenuDashboardModules,
     sidebarDashboardBySection,
     catalogReportModules,
+    catalogStatementModules,
   ] = await Promise.all([
     prisma.permission.findMany({
       orderBy: [{ moduleKey: 'asc' }, { actionKey: 'asc' }],
@@ -51,6 +61,7 @@ rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async 
     listMainMenuDashboardModuleKeys(),
     listSidebarDashboardModulesBySection(),
     listCatalogReportModuleKeys(),
+    listCatalogStatementModuleKeys(),
   ])
 
   const allCustomDashboardModules = [
@@ -69,16 +80,23 @@ rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async 
     ...Object.fromEntries(
       catalogReportModules.map((moduleKey) => [moduleKey, [...CUSTOM_REPORT_ACTIONS]]),
     ),
+    ...Object.fromEntries(
+      catalogStatementModules.map((moduleKey) => [moduleKey, [...CUSTOM_STATEMENT_ACTIONS]]),
+    ),
   }
 
   const modules = insertModulesAfter(
-    buildDashboardPermissionModuleList(
-      MODULES,
-      mainMenuDashboardModules,
-      sidebarDashboardBySection,
+    insertModulesAfter(
+      buildDashboardPermissionModuleList(
+        MODULES,
+        mainMenuDashboardModules,
+        sidebarDashboardBySection,
+      ),
+      'reports',
+      catalogReportModules,
     ),
-    'reports',
-    catalogReportModules,
+    'statements',
+    catalogStatementModules,
   )
 
   return res.json({

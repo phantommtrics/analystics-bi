@@ -17,6 +17,7 @@ const listQuerySchema = z.object({
   dateTo: z.string().optional(),
   user: z.string().optional(),
   action: z.string().optional(),
+  tzOffset: z.coerce.number().int().optional(),
 })
 
 export const auditLogsRouter = Router()
@@ -30,8 +31,12 @@ auditLogsRouter.get('/', async (req, res) => {
     return res.status(400).json({ message: 'Invalid query parameters' })
   }
 
-  const { page, pageSize, dateFrom, dateTo, user, action } = parsed.data
-  const result = await listAuditLogs({ dateFrom, dateTo, user, action }, page, pageSize)
+  const { page, pageSize, dateFrom, dateTo, user, action, tzOffset } = parsed.data
+  const result = await listAuditLogs(
+    { dateFrom, dateTo, user, action, tzOffsetMinutes: tzOffset },
+    page,
+    pageSize,
+  )
   return res.json(result)
 })
 
@@ -46,8 +51,14 @@ auditLogsRouter.get('/export', authorize('audit', 'export_csv'), async (req, res
     return res.status(400).json({ message: 'Invalid query parameters' })
   }
 
-  const { dateFrom, dateTo, user, action } = parsed.data
-  const rows = await listAuditLogsForExport({ dateFrom, dateTo, user, action })
+  const { dateFrom, dateTo, user, action, tzOffset } = parsed.data
+  const rows = await listAuditLogsForExport({
+    dateFrom,
+    dateTo,
+    user,
+    action,
+    tzOffsetMinutes: tzOffset,
+  })
   const csv = auditLogsToCsv(rows)
   const stamp = new Date().toISOString().slice(0, 10)
 

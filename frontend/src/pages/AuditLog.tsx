@@ -10,12 +10,21 @@ import { Card, CardHeader, CardTitle } from '../components/ui/Card'
 import { DataTable } from '../components/ui/DataTable'
 import { TablePagination } from '../components/ui/TablePagination'
 import { useAuth } from '../auth/AuthContext'
+import { todayIso } from '../lib/dateFilterRanges'
 
-const EMPTY_FILTERS: AuditLogFilters = {
-  dateFrom: '',
-  dateTo: '',
-  user: '',
-  action: '',
+function defaultAuditFilters(): AuditLogFilters {
+  const today = todayIso()
+  return {
+    dateFrom: today,
+    dateTo: today,
+    user: '',
+    action: '',
+  }
+}
+
+function isDefaultDateRange(filters: AuditLogFilters): boolean {
+  const today = todayIso()
+  return filters.dateFrom === today && filters.dateTo === today
 }
 
 function formatTimestamp(iso: string) {
@@ -34,8 +43,8 @@ export function AuditLog() {
   const [exportLoading, setExportLoading] = useState(false)
   const [error, setError] = useState('')
   const [showFilters, setShowFilters] = useState(false)
-  const [draftFilters, setDraftFilters] = useState<AuditLogFilters>(EMPTY_FILTERS)
-  const [appliedFilters, setAppliedFilters] = useState<AuditLogFilters>(EMPTY_FILTERS)
+  const [draftFilters, setDraftFilters] = useState<AuditLogFilters>(defaultAuditFilters)
+  const [appliedFilters, setAppliedFilters] = useState<AuditLogFilters>(defaultAuditFilters)
   const [actionOptions, setActionOptions] = useState<string[]>([])
 
   const canExport = hasPermission('audit', 'export_csv')
@@ -72,17 +81,17 @@ export function AuditLog() {
 
   const activeFilterCount = useMemo(() => {
     let count = 0
-    if (appliedFilters.dateFrom) count += 1
-    if (appliedFilters.dateTo) count += 1
+    if (!isDefaultDateRange(appliedFilters)) count += 1
     if (appliedFilters.user?.trim()) count += 1
     if (appliedFilters.action?.trim()) count += 1
     return count
   }, [appliedFilters])
 
   function applyFilters() {
+    const today = todayIso()
     setAppliedFilters({
-      dateFrom: draftFilters.dateFrom?.trim() || undefined,
-      dateTo: draftFilters.dateTo?.trim() || undefined,
+      dateFrom: draftFilters.dateFrom?.trim() || today,
+      dateTo: draftFilters.dateTo?.trim() || today,
       user: draftFilters.user?.trim() || undefined,
       action: draftFilters.action?.trim() || undefined,
     })
@@ -91,8 +100,9 @@ export function AuditLog() {
   }
 
   function clearFilters() {
-    setDraftFilters(EMPTY_FILTERS)
-    setAppliedFilters(EMPTY_FILTERS)
+    const defaults = defaultAuditFilters()
+    setDraftFilters(defaults)
+    setAppliedFilters(defaults)
     setPage(1)
   }
 

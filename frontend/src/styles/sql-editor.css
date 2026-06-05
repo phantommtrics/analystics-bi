@@ -1,14 +1,63 @@
+.sql-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.sql-editor-gutter {
+  padding: 0;
+}
+
 .sql-editor-gutter pre {
+  margin: 0;
+  padding: 0 8px;
   font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  line-height: 22px;
+  font-family: inherit;
+}
+
+.sql-editor-code-layer {
+  margin: 0;
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-family: inherit;
+  font-weight: 400;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-wrap: normal;
+  tab-size: 2;
+}
+
+.sql-editor-input {
+  margin: 0;
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 22px;
+  font-family: inherit;
+  font-weight: 400;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-wrap: normal;
+  tab-size: 2;
+  -webkit-text-fill-color: transparent;
+}
+
+.sql-editor-highlight {
+  color: #d4d4d4;
 }
 
 .sql-editor .sql-keyword {
   color: #569cd6;
-  font-weight: 600;
+  /* Bold keywords were stretching line height vs gutter/textarea. */
+  font-weight: inherit;
 }
 
 .sql-editor .sql-function {
   color: #dcdcaa;
+  font-weight: inherit;
 }
 
 .sql-editor .sql-string {

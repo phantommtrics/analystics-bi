@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { TopBar } from '../components/layout/TopBar'
-import { ScheduleFormModal } from '../components/schedules/ScheduleFormModal'
+import {
+  ScheduleFormModal,
+  type ScheduleFormSubmit,
+  type ScheduleKind,
+} from '../components/schedules/ScheduleFormModal'
 import { Badge } from '../components/ui/Badge'
 import { Card, CardHeader, CardTitle } from '../components/ui/Card'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { DataTable } from '../components/ui/DataTable'
 import {
   schedulesApi,
-  type CreateSchedulePayload,
   type ReportScheduleSummary,
   type ReportScheduleStatus,
   type ScheduleGroupOption,
   type SchedulableReportOption,
+  type SchedulableStatementOption,
+  type StatementScheduleSummary,
   type UpdateSchedulePayload,
 } from '../api/schedules'
 import { useAuth } from '../auth/AuthContext'
@@ -33,6 +38,15 @@ const STATUS_VARIANTS: Record<
   FAILED: 'red',
 }
 
+const KIND_LABELS: Record<ScheduleKind, string> = {
+  report: 'Report',
+  statement: 'Statement',
+}
+
+type UnifiedScheduleRow =
+  | ({ kind: 'report' } & ReportScheduleSummary)
+  | ({ kind: 'statement' } & StatementScheduleSummary)
+
 function formatScheduleDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
     dateStyle: 'medium',
@@ -40,22 +54,32 @@ function formatScheduleDate(iso: string) {
   })
 }
 
-function isOneTimeCompleted(schedule: ReportScheduleSummary) {
+function isOneTimeCompleted(schedule: { recurrence: string; status: string }) {
   return schedule.recurrence === 'ONCE' && schedule.status === 'COMPLETED'
+}
+
+function scheduleTargetName(row: UnifiedScheduleRow) {
+  return row.kind === 'report' ? row.reportName : row.statementName
+}
+
+function scheduleRowKey(row: UnifiedScheduleRow) {
+  return `${row.kind}:${row.id}`
 }
 
 export function Schedules() {
   const { accessToken, hasPermission } = useAuth()
   const [schedules, setSchedules] = useState<ReportScheduleSummary[]>([])
+  const [statementSchedules, setStatementSchedules] = useState<StatementScheduleSummary[]>([])
   const [reports, setReports] = useState<SchedulableReportOption[]>([])
+  const [statements, setStatements] = useState<SchedulableStatementOption[]>([])
   const [groups, setGroups] = useState<ScheduleGroupOption[]>([])
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState<ReportScheduleSummary | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<ReportScheduleSummary | null>(null)
+  const [editing, setEditing] = useState<UnifiedScheduleRow | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<UnifiedScheduleRow | null>(null)
 
   const canSchedule = hasPermission('schedules', 'schedule')
   const canEdit = hasPermission('schedules', 'edit')
@@ -66,13 +90,18 @@ export function Schedules() {
     setLoading(true)
     setError('')
     try {
-      const [list, reportOptions, groupOptions] = await Promise.all([
-        schedulesApi.list(accessToken),
-        schedulesApi.listReports(accessToken),
-        schedulesApi.listGroups(accessToken),
-      ])
+      const [list, statementList, reportOptions, statementOptions, groupOptions] =
+        await Promise.all([
+          schedulesApi.list(accessToken),
+          schedulesApi.listStatementSchedules(accessToken),
+          schedulesApi.listReports(accessToken),
+          schedulesApi.listStatementOptions(accessToken),
+          schedulesApi.listGroups(accessToken),
+        ])
       setSchedules(list)
+      setStatementSchedules(statementList)
       setReports(reportOptions)
+      setStatements(statementOptions)
       setGroups(groupOptions)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load schedules')
@@ -85,23 +114,29 @@ export function Schedules() {
     void loadData()
   }, [loadData])
 
-  const sortedSchedules = useMemo(
-    () =>
-      [...schedules].sort(
-        (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
-      ),
-    [schedules],
+  const allSchedules = useMemo<UnifiedScheduleRow[]>(
+    () => [
+      ...schedules.map((s) => ({ kind: 'report' as const, ...s })),
+      ...statementSchedules.map((s) => ({ kind: 'statement' as const, ...s })),
+    ].sort(
+      (a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime(),
+    ),
+    [schedules, statementSchedules],
   )
 
-  async function handleCreate(data: CreateSchedulePayload) {
+  async function handleCreate(payload: ScheduleFormSubmit) {
     if (!accessToken) return
     setActionLoading(true)
     setError('')
     try {
-      await schedulesApi.create(accessToken, data)
+      if (payload.kind === 'report') {
+        await schedulesApi.create(accessToken, payload.data)
+      } else {
+        await schedulesApi.createStatement(accessToken, payload.data)
+      }
       setFormOpen(false)
       setSuccess(
-        data.recurrence === 'ONCE'
+        payload.data.recurrence === 'ONCE'
           ? 'Schedule created. Recipients will be emailed at the due time.'
           : 'Recurring schedule created. Emails will be sent on each occurrence.',
       )
@@ -113,22 +148,28 @@ export function Schedules() {
     }
   }
 
-  async function handleUpdate(data: CreateSchedulePayload) {
+  async function handleUpdate(payload: ScheduleFormSubmit) {
     if (!accessToken || !editing) return
     setActionLoading(true)
     setError('')
     try {
-      const payload: UpdateSchedulePayload = {
-        recurrence: data.recurrence,
-        timeMinutes: data.timeMinutes,
-        dayOfWeek: data.dayOfWeek,
-        dayOfMonth: data.dayOfMonth,
-        timezoneOffsetMinutes: data.timezoneOffsetMinutes,
+      const updatePayload: UpdateSchedulePayload = {
+        recurrence: payload.data.recurrence,
+        timeMinutes: payload.data.timeMinutes,
+        dayOfWeek: payload.data.dayOfWeek,
+        dayOfMonth: payload.data.dayOfMonth,
+        timezoneOffsetMinutes: payload.data.timezoneOffsetMinutes,
       }
-      if (data.recurrence === 'ONCE' && data.scheduledAt) {
-        payload.scheduledAt = data.scheduledAt
+      if (payload.data.recurrence === 'ONCE' && payload.data.scheduledAt) {
+        updatePayload.scheduledAt = payload.data.scheduledAt
       }
-      await schedulesApi.update(accessToken, editing.id, payload)
+
+      if (editing.kind === 'report') {
+        await schedulesApi.update(accessToken, editing.id, updatePayload)
+      } else {
+        await schedulesApi.updateStatement(accessToken, editing.id, updatePayload)
+      }
+
       setEditing(null)
       setSuccess('Schedule updated.')
       await loadData()
@@ -139,13 +180,17 @@ export function Schedules() {
     }
   }
 
-  async function togglePause(schedule: ReportScheduleSummary) {
+  async function togglePause(schedule: UnifiedScheduleRow) {
     if (!accessToken) return
     const nextStatus = schedule.status === 'PAUSED' ? 'ACTIVE' : 'PAUSED'
     setActionLoading(true)
     setError('')
     try {
-      await schedulesApi.update(accessToken, schedule.id, { status: nextStatus })
+      if (schedule.kind === 'report') {
+        await schedulesApi.update(accessToken, schedule.id, { status: nextStatus })
+      } else {
+        await schedulesApi.updateStatement(accessToken, schedule.id, { status: nextStatus })
+      }
       setSuccess(nextStatus === 'PAUSED' ? 'Schedule paused.' : 'Schedule resumed.')
       await loadData()
     } catch (err) {
@@ -160,7 +205,11 @@ export function Schedules() {
     setActionLoading(true)
     setError('')
     try {
-      await schedulesApi.remove(accessToken, deleteTarget.id)
+      if (deleteTarget.kind === 'report') {
+        await schedulesApi.remove(accessToken, deleteTarget.id)
+      } else {
+        await schedulesApi.removeStatement(accessToken, deleteTarget.id)
+      }
       setDeleteTarget(null)
       setSuccess('Schedule deleted.')
       await loadData()
@@ -174,7 +223,7 @@ export function Schedules() {
   return (
     <div className="flex h-full flex-col">
       <TopBar
-        title="Report Schedules"
+        title="Schedules"
         primaryAction={
           canSchedule
             ? {
@@ -203,29 +252,37 @@ export function Schedules() {
 
         <Card noPadding>
           <CardHeader className="mb-0 border-b border-border p-5">
-            <CardTitle>Scheduled reports</CardTitle>
+            <CardTitle>Scheduled deliveries</CardTitle>
             <p className="mt-1 text-sm text-text-secondary">
-              Send report links by email on a one-time or recurring basis (daily, weekly, or
-              monthly). 
+              Send reports or statements by email on a one-time or recurring basis (daily, weekly,
+              or monthly).
             </p>
           </CardHeader>
           {loading ? (
             <div className="p-8 text-center text-sm text-text-secondary">Loading schedules…</div>
-          ) : sortedSchedules.length === 0 ? (
+          ) : allSchedules.length === 0 ? (
             <div className="p-8 text-center text-sm text-text-secondary">
               No schedules yet.
-              {canSchedule && ' Create one to email a group when a report is due.'}
+              {canSchedule && ' Create one to email a group when a report or statement is due.'}
             </div>
           ) : (
             <DataTable
-              data={sortedSchedules}
-              keyExtractor={(r) => r.id}
+              data={allSchedules}
+              keyExtractor={scheduleRowKey}
               columns={[
                 {
-                  header: 'Report',
+                  header: 'Type',
+                  accessor: (r) => (
+                    <Badge variant={r.kind === 'report' ? 'blue' : 'purple'}>
+                      {KIND_LABELS[r.kind]}
+                    </Badge>
+                  ),
+                },
+                {
+                  header: 'Name',
                   accessor: (r) => (
                     <div>
-                      <div className="font-medium">{r.reportName}</div>
+                      <div className="font-medium">{scheduleTargetName(r)}</div>
                       {r.lastError && r.status === 'FAILED' && (
                         <div className="mt-0.5 text-xs text-semantic-red">{r.lastError}</div>
                       )}
@@ -344,8 +401,9 @@ export function Schedules() {
 
       <ScheduleFormModal
         open={formOpen}
-        title="New report schedule"
+        title="New schedule"
         reports={reports}
+        statements={statements}
         groups={groups}
         loading={actionLoading}
         onConfirm={handleCreate}
@@ -356,9 +414,9 @@ export function Schedules() {
         open={Boolean(editing)}
         title="Edit schedule"
         reports={reports}
+        statements={statements}
         groups={groups}
         loading={actionLoading}
-        lockReportAndGroup
         initial={editing}
         onConfirm={handleUpdate}
         onCancel={() => setEditing(null)}
@@ -369,7 +427,7 @@ export function Schedules() {
         title="Delete schedule"
         message={
           deleteTarget
-            ? `Remove the schedule for "${deleteTarget.reportName}" (${deleteTarget.recurrenceLabel}) to ${deleteTarget.groupName}?`
+            ? `Remove the ${KIND_LABELS[deleteTarget.kind].toLowerCase()} schedule for "${scheduleTargetName(deleteTarget)}" (${deleteTarget.recurrenceLabel}) to ${deleteTarget.groupName}?`
             : ''
         }
         confirmLabel="Delete"

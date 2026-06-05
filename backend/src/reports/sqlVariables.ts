@@ -1,8 +1,20 @@
-const PARAM_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+import {
+  buildVariableToken,
+  extractSqlVariableDefs,
+  extractSqlVariables,
+  parseVariableToken,
+} from './variableTokens.js'
 
-const COLON_PARAM = /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)\b/g
-const MUSTACHE_PARAM = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g
-const TEMPLATE_PARAM = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g
+export {
+  buildVariableToken,
+  extractSqlVariableDefs,
+  extractSqlVariables,
+  hasFilterValue,
+  isRequiredVariable,
+  parseArrayValue,
+  parseVariableToken,
+  type SqlVariableDef,
+} from './variableTokens.js'
 
 const DATE_FROM_ALIASES = new Set([
   'dateFrom',
@@ -23,29 +35,17 @@ const DATE_TO_ALIASES = new Set([
   'dateToExclusive',
 ])
 
-export function extractSqlVariables(sql: string): string[] {
-  const found = new Set<string>()
-  for (const re of [COLON_PARAM, MUSTACHE_PARAM, TEMPLATE_PARAM]) {
-    re.lastIndex = 0
-    let match: RegExpExecArray | null
-    while ((match = re.exec(sql)) !== null) {
-      const name = match[1]
-      if (PARAM_NAME.test(name)) found.add(name)
-    }
-  }
-  return [...found].sort((a, b) => a.localeCompare(b))
-}
-
 export function isDateVariable(name: string): boolean {
-  return DATE_FROM_ALIASES.has(name) || DATE_TO_ALIASES.has(name)
+  const { baseName } = parseVariableToken(name)
+  return DATE_FROM_ALIASES.has(baseName) || DATE_TO_ALIASES.has(baseName)
 }
 
 export function isDateFromVariable(name: string): boolean {
-  return DATE_FROM_ALIASES.has(name)
+  return DATE_FROM_ALIASES.has(parseVariableToken(name).baseName)
 }
 
 export function isDateToVariable(name: string): boolean {
-  return DATE_TO_ALIASES.has(name)
+  return DATE_TO_ALIASES.has(parseVariableToken(name).baseName)
 }
 
 export function sqlHasDateVariables(variables: string[]): boolean {
@@ -53,6 +53,7 @@ export function sqlHasDateVariables(variables: string[]): boolean {
 }
 
 export function defaultValueForVariable(name: string, anchorIso: string): string {
+  const { baseName } = parseVariableToken(name)
   const anchor = new Date(`${anchorIso}T12:00:00`)
   const y = anchor.getFullYear()
   const m = String(anchor.getMonth() + 1).padStart(2, '0')
@@ -60,8 +61,8 @@ export function defaultValueForVariable(name: string, anchorIso: string): string
   const isoAnchor = `${y}-${m}-${d}`
   const monthStart = `${y}-${m}-01`
 
-  if (isDateFromVariable(name)) return monthStart
-  if (isDateToVariable(name)) return isoAnchor
+  if (DATE_FROM_ALIASES.has(baseName)) return monthStart
+  if (DATE_TO_ALIASES.has(baseName)) return isoAnchor
   return ''
 }
 

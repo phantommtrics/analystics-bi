@@ -89,7 +89,7 @@ export function DashboardKpiWidget({
 
   const bodyContent =
     linked && queryFilters === undefined ? (
-      <p className="text-center text-sm opacity-80">Select a date filter to load</p>
+      <p className="text-center text-sm opacity-80">Set report filters to load</p>
     ) : loading && linked ? (
       <p className="text-center text-sm opacity-80">Loading...</p>
     ) : error && linked ? (

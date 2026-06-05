@@ -114,6 +114,12 @@ const navGroups: {
         moduleKey: 'dashboard-builder',
       },
       {
+        label: 'Statement Builder',
+        icon: 'ti-receipt-2',
+        path: '/statement-builder',
+        moduleKey: 'statement-builder',
+      },
+      {
         label: 'Schedules',
         icon: 'ti-calendar',
         path: '/schedules',

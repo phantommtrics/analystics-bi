@@ -4,9 +4,13 @@ import { decrypt, encrypt } from './crypto.js'
 import {
   destroyPool,
   executeReadOnlyQuery,
+  getSchemaTableColumns,
+  listSchemaTables,
   testConnection,
   type ExecuteQueryResult,
   type PostgresConnectionConfig,
+  type SchemaColumn,
+  type SchemaTable,
   type TestConnectionResult,
 } from './postgres.js'
 
@@ -168,4 +172,32 @@ export async function executeDataSourceQuery(
   }
   const config = getConnectionConfig(record)
   return executeReadOnlyQuery(record.id, config, sql)
+}
+
+async function requireActiveDataSource(dataSourceId: string) {
+  const record = await prisma.dataSource.findUnique({ where: { id: dataSourceId } })
+  if (!record) {
+    throw new Error('NOT_FOUND')
+  }
+  if (!record.isActive) {
+    throw new Error('INACTIVE')
+  }
+  return { record, config: getConnectionConfig(record) }
+}
+
+export async function listDataSourceTables(
+  dataSourceId: string,
+  search = '',
+): Promise<SchemaTable[]> {
+  const { record, config } = await requireActiveDataSource(dataSourceId)
+  return listSchemaTables(record.id, config, search)
+}
+
+export async function getDataSourceTableColumns(
+  dataSourceId: string,
+  schema: string,
+  table: string,
+): Promise<SchemaColumn[]> {
+  const { record, config } = await requireActiveDataSource(dataSourceId)
+  return getSchemaTableColumns(record.id, config, schema, table)
 }

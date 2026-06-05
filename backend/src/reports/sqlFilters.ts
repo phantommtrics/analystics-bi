@@ -1,7 +1,15 @@
-const PARAM_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+import {
+  extractSqlVariableDefs,
+  getFilterValue,
+  hasFilterValue,
+  isRequiredVariable,
+  parseArrayValue,
+  parseVariableToken,
+  type SqlVariableDef,
+} from './variableTokens.js'
 
-/** Match :param but not PostgreSQL ::cast (e.g. column::text). */
-const COLON_PARAM = /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)\b/g
+/** Optional SQL sections removed when every optional variable inside is unset. */
+const OPTIONAL_BLOCK = /\[\[([\s\S]*?)\]\]/g
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -68,38 +76,98 @@ export function expandDashboardFilters(filters: Record<string, string>): Record<
   return expanded
 }
 
-export function findUnsubstitutedColonParams(sql: string): string[] {
+function formatSubstitution(def: SqlVariableDef, rawValue: string | undefined): string | null {
+  const value = rawValue?.trim() ?? ''
+
+  if (!value) {
+    if (def.optional) return 'NULL'
+    return null
+  }
+
+  if (def.array) {
+    const items = parseArrayValue(value)
+    if (items.length === 0) {
+      if (def.optional) return 'NULL'
+      return null
+    }
+    return items.map((item) => quoteSqlLiteral(item)).join(', ')
+  }
+
+  return quoteSqlLiteral(value)
+}
+
+function removeOptionalBlocks(sql: string, filters: Record<string, string>): string {
+  return sql.replace(OPTIONAL_BLOCK, (full, inner) => {
+    const defs = extractSqlVariableDefs(inner)
+    const optionalInBlock = defs.filter((d) => d.optional)
+    if (optionalInBlock.length === 0) {
+      return inner
+    }
+
+    const dropBlock = optionalInBlock.every(
+      (def) => !hasFilterValue(getFilterValue(filters, def.token), def),
+    )
+    return dropBlock ? '' : inner
+  })
+}
+
+function substituteToken(
+  sql: string,
+  def: SqlVariableDef,
+  replacement: string,
+): string {
+  const colonRe = new RegExp(`(?<!:)${escapeRegExp(':' + def.token)}(?=\\s|,|\\)|;|$|\\]|\\}|\\|)`, 'g')
+  let result = sql.replace(colonRe, replacement)
+  result = result.replace(
+    new RegExp(`\\{\\{\\s*${escapeRegExp(def.token)}\\s*\\}\\}`, 'g'),
+    replacement,
+  )
+  result = result.replace(
+    new RegExp(`\\$\\{${escapeRegExp(def.token)}\\}`, 'g'),
+    replacement,
+  )
+  return result
+}
+
+function findUnsubstitutedTokens(sql: string): string[] {
   const found = new Set<string>()
-  COLON_PARAM.lastIndex = 0
+  const re =
+    /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?(?=\s|,|\)|;|$|\]|\}|\|)/g
   let match: RegExpExecArray | null
-  while ((match = COLON_PARAM.exec(sql)) !== null) {
-    const name = match[1]
-    if (PARAM_NAME.test(name)) found.add(name)
+  while ((match = re.exec(sql)) !== null) {
+    const token = match[1] + (match[2] ?? '') + (match[3] ?? '')
+    found.add(token)
   }
   return [...found].sort()
 }
 
+export function findUnsubstitutedColonParams(sql: string): string[] {
+  return findUnsubstitutedTokens(sql)
+}
+
 export function applySqlFilters(sql: string, filters: Record<string, string>): string {
   const expanded = expandDashboardFilters(filters)
-  let result = sql
+  let result = removeOptionalBlocks(sql, expanded)
 
-  const keys = Object.keys(expanded).filter((key) => PARAM_NAME.test(key))
-  keys.sort((a, b) => b.length - a.length)
+  const defs = extractSqlVariableDefs(result)
+  const sorted = [...defs].sort((a, b) => b.token.length - a.token.length)
 
-  for (const key of keys) {
-    const value = expanded[key]
-    if (value === undefined || value === '') continue
-    const quoted = quoteSqlLiteral(value)
-    const colonRe = new RegExp(`(?<!:)${escapeRegExp(':' + key)}\\b`, 'g')
-    result = result.replace(colonRe, quoted)
-    result = result.replace(new RegExp(`\\{\\{\\s*${escapeRegExp(key)}\\s*\\}\\}`, 'g'), quoted)
-    result = result.replace(new RegExp(`\\$\\{${escapeRegExp(key)}\\}`, 'g'), quoted)
+  for (const def of sorted) {
+    const raw = getFilterValue(expanded, def.token)
+    const replacement = formatSubstitution(def, raw)
+    if (replacement === null) continue
+    result = substituteToken(result, def, replacement)
   }
 
-  const remaining = findUnsubstitutedColonParams(result)
-  if (remaining.length > 0) {
+  const remaining = findUnsubstitutedTokens(result)
+  const requiredUnset = remaining.filter((token) => {
+    const def = parseVariableToken(token)
+    return isRequiredVariable(def) && !hasFilterValue(getFilterValue(expanded, token), def)
+  })
+
+  if (requiredUnset.length > 0) {
     throw new Error(
-      `Unset SQL variable(s): ${remaining.join(', ')}. Provide values in the Variables panel or dashboard date filter.`,
+      `Unset SQL variable(s): ${requiredUnset.join(', ')}. Provide values in the Variables panel or dashboard date filter.`,
     )
   }
 

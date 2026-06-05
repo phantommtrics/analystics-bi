@@ -5,25 +5,52 @@ import { TopBar } from '../components/layout/TopBar'
 import { dashboardsApi, type DashboardDetail } from '../api/dashboards'
 import { type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
-import { useDashboardFilters } from '../hooks/useDashboardFilters'
-import { canViewCustomDashboard, filtersToQueryRecord, formatFilterLabel, serializeQueryFilters } from '../lib/dashboardFilters'
+import { useLayoutReportSql } from '../hooks/useLayoutReportSql'
+import { useReportVariables } from '../hooks/useReportVariables'
+import {
+  canViewCustomDashboard,
+  formatQueryFiltersLabel,
+  serializeQueryFilters,
+} from '../lib/dashboardFilters'
 import type { DashboardLayout } from '../lib/dashboardLayout'
 import { buildDashboardWidgetExportPermissions } from '../lib/widgetExport'
 
 export function CustomDashboard() {
   const { id } = useParams<{ id: string }>()
   const { accessToken, hasPermission, user } = useAuth()
-  const { filters, setFilters } = useDashboardFilters()
 
   const [dashboard, setDashboard] = useState<DashboardDetail | null>(null)
   const [reports, setReports] = useState<SavedReportSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const layout: DashboardLayout = dashboard?.layout ?? {
+    gridCols: 12,
+    rowHeight: 80,
+    widgets: [],
+  }
+
+  const { sqlSources, loading: sqlLoading } = useLayoutReportSql(accessToken, layout)
+  const {
+    variables,
+    values: variableValues,
+    queryFilters,
+    hasDateVariables,
+    dateFilters,
+    filtersReady,
+    setVariable,
+    setDateFilters,
+  } = useReportVariables(sqlSources)
+
+  const effectiveQueryFilters =
+    sqlLoading || !filtersReady ? undefined : queryFilters
+  const filterKey = useMemo(
+    () => serializeQueryFilters(effectiveQueryFilters),
+    [effectiveQueryFilters],
+  )
+
   const permissions = user?.permissions ?? []
   const canViewCustom = id ? canViewCustomDashboard(permissions, id, user?.userType) : false
-  const queryFilters = useMemo(() => filtersToQueryRecord(filters), [filters])
-  const filterKey = useMemo(() => serializeQueryFilters(queryFilters), [queryFilters])
 
   const loadDashboard = useCallback(async () => {
     if (!accessToken || !id) return
@@ -62,9 +89,13 @@ export function CustomDashboard() {
     () => ({
       dashboardName: dashboard?.name,
       dashboardDescription: dashboard?.description ?? undefined,
-      filterLabel: formatFilterLabel(filters),
+      filterLabel: formatQueryFiltersLabel(dateFilters, {
+        hasDateVariables,
+        variables,
+        values: variableValues,
+      }),
     }),
-    [dashboard?.name, dashboard?.description, filters],
+    [dashboard?.name, dashboard?.description, dateFilters, hasDateVariables, variables, variableValues],
   )
 
   if (!id) {
@@ -79,20 +110,25 @@ export function CustomDashboard() {
     return <Navigate to="/" replace />
   }
 
-  const layout: DashboardLayout = dashboard?.layout ?? {
-    gridCols: 12,
-    rowHeight: 80,
-    widgets: [],
-  }
   const reportsById = new Map(reports.map((r) => [r.id, r]))
 
   return (
     <div className="flex h-full flex-col">
       <TopBar
         title={dashboard?.name ?? 'Dashboard'}
-        showDateFilter
-        dateFilter={filters}
-        onDateFilterChange={setFilters}
+        showDateFilter={false}
+        reportFilters={
+          variables.length > 0
+            ? {
+                variables,
+                values: variableValues,
+                hasDateVariables,
+                dateFilters,
+                onVariableChange: setVariable,
+                onDateFiltersChange: setDateFilters,
+              }
+            : undefined
+        }
         showExport={false}
       />
 
@@ -110,13 +146,16 @@ export function CustomDashboard() {
             {dashboard.description && (
               <p className="mb-4 text-sm text-text-secondary">{dashboard.description}</p>
             )}
-            {!filters.enabled && (
+
+            {!filtersReady && (
               <div className="mb-4 rounded-md border border-dashed border-border bg-bg-secondary px-4 py-3 text-sm text-text-secondary">
                 <i className="ti ti-filter-off mr-2"></i>
-                No date filter selected — report widgets will not load data until you choose a
-                range.
+                {hasDateVariables && !dateFilters.enabled
+                  ? 'No date filter selected — choose a range in the header filter to load data.'
+                  : 'Set required report parameters in the header filter before widgets can load data.'}
               </div>
             )}
+
             <DashboardGrid
               key={filterKey}
               accessToken={accessToken!}
@@ -126,7 +165,7 @@ export function CustomDashboard() {
               canEdit={false}
               previewMode
               dashboardId={id}
-              queryFilters={queryFilters}
+              queryFilters={effectiveQueryFilters}
               showWidgetExport
               exportContext={exportContext}
               getWidgetExportPermissions={getWidgetExportPermissions}

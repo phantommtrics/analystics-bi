@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { DashboardDateFilter } from '../components/dashboard/DashboardDateFilter'
+import { ReportFiltersDropdown } from '../components/shared/ReportFiltersDropdown'
 import { TopBar } from '../components/layout/TopBar'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { DashboardBuilderPanel } from '../components/dashboard/DashboardBuilderPanel'
@@ -23,8 +23,9 @@ import {
   isSidebarReportCategory,
   type SidebarReportCategory,
 } from '../lib/reportConstants'
-import { useDashboardFilters } from '../hooks/useDashboardFilters'
-import { filtersToQueryRecord, formatFilterLabel, serializeQueryFilters } from '../lib/dashboardFilters'
+import { useLayoutReportSql } from '../hooks/useLayoutReportSql'
+import { useReportVariables } from '../hooks/useReportVariables'
+import { formatQueryFiltersLabel, serializeQueryFilters } from '../lib/dashboardFilters'
 import { buildDashboardWidgetExportPermissions } from '../lib/widgetExport'
 
 const initialTab = createDashboardTab({ title: 'Dashboard 1' })
@@ -32,9 +33,6 @@ const initialTab = createDashboardTab({ title: 'Dashboard 1' })
 export function DashboardBuilder() {
   const { accessToken, hasPermission } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { filters, setFilters } = useDashboardFilters()
-  const queryFilters = useMemo(() => filtersToQueryRecord(filters), [filters])
-  const filterKey = useMemo(() => serializeQueryFilters(queryFilters), [queryFilters])
 
   const canEdit = hasPermission('dashboard-builder', 'edit')
   const canDelete = hasPermission('dashboard-builder', 'delete')
@@ -61,6 +59,28 @@ export function DashboardBuilder() {
   const activeTab = useMemo(
     () => tabs.find((t) => t.id === activeTabId) ?? tabs[0],
     [tabs, activeTabId],
+  )
+
+  const { sqlSources, loading: sqlLoading } = useLayoutReportSql(
+    accessToken,
+    activeTab.layout,
+  )
+  const {
+    variables,
+    values: variableValues,
+    queryFilters,
+    hasDateVariables,
+    dateFilters,
+    filtersReady,
+    setVariable,
+    setDateFilters,
+  } = useReportVariables(sqlSources)
+
+  const effectiveQueryFilters =
+    sqlLoading || !filtersReady ? undefined : queryFilters
+  const filterKey = useMemo(
+    () => serializeQueryFilters(effectiveQueryFilters),
+    [effectiveQueryFilters],
   )
 
   const updateActiveTab = useCallback(
@@ -90,9 +110,13 @@ export function DashboardBuilder() {
     () => ({
       dashboardName: activeTab.name,
       dashboardDescription: activeTab.description,
-      filterLabel: formatFilterLabel(filters),
+      filterLabel: formatQueryFiltersLabel(dateFilters, {
+        hasDateVariables,
+        variables,
+        values: variableValues,
+      }),
     }),
-    [activeTab.name, activeTab.description, filters],
+    [activeTab.name, activeTab.description, dateFilters, hasDateVariables, variables, variableValues],
   )
 
   const openDashboardIds = useMemo(
@@ -461,11 +485,17 @@ export function DashboardBuilder() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <DashboardDateFilter
-                filters={filters}
-                onChange={setFilters}
-                compact
-              />
+              {variables.length > 0 && (
+                <ReportFiltersDropdown
+                  variables={variables}
+                  values={variableValues}
+                  hasDateVariables={hasDateVariables}
+                  dateFilters={dateFilters}
+                  onVariableChange={setVariable}
+                  onDateFiltersChange={setDateFilters}
+                  compact
+                />
+              )}
               {canEdit && activeTab.savedDashboardId && !layoutDirty && (
                 activeTab.isPublished ? (
                   <button
@@ -502,6 +532,15 @@ export function DashboardBuilder() {
             </div>
           </div>
 
+          {!filtersReady && activeTab.layout.widgets.length > 0 && (
+            <div className="shrink-0 border-b border-border bg-bg-secondary px-4 py-2 text-xs text-text-secondary">
+              <i className="ti ti-filter-off mr-1.5"></i>
+              {hasDateVariables && !dateFilters.enabled
+                ? 'Select a date filter in the toolbar to load widget data.'
+                : 'Set required report parameters in the toolbar filter before widgets can load data.'}
+            </div>
+          )}
+
           <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:p-4">
             <DashboardGrid
               key={filterKey}
@@ -510,7 +549,7 @@ export function DashboardBuilder() {
               reports={reports}
               reportsById={reportsById}
               canEdit={canEdit}
-              queryFilters={queryFilters}
+              queryFilters={effectiveQueryFilters}
               dashboardId={activeDashboardId ?? undefined}
               showWidgetExport
               exportContext={exportContext}
@@ -535,7 +574,17 @@ export function DashboardBuilder() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <DashboardDateFilter filters={filters} onChange={setFilters} compact />
+              {variables.length > 0 && (
+                <ReportFiltersDropdown
+                  variables={variables}
+                  values={variableValues}
+                  hasDateVariables={hasDateVariables}
+                  dateFilters={dateFilters}
+                  onVariableChange={setVariable}
+                  onDateFiltersChange={setDateFilters}
+                  compact
+                />
+              )}
               <button
                 type="button"
                 onClick={() => setLayoutPreviewExpanded(false)}
@@ -556,7 +605,7 @@ export function DashboardBuilder() {
               canEdit={false}
               onChange={setLayout}
               previewMode
-              queryFilters={queryFilters}
+              queryFilters={effectiveQueryFilters}
               dashboardId={activeDashboardId ?? undefined}
               showWidgetExport
               exportContext={exportContext}

@@ -5,12 +5,10 @@ import { reportsApi, type SavedReportDetail } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import { TopBar } from '../components/layout/TopBar'
 import { ReportRunDisplay } from '../components/report/ReportRunDisplay'
-import { ReportVariablesPanel } from '../components/report/ReportVariablesPanel'
 import { useReportVariables } from '../hooks/useReportVariables'
-import { formatFilterLabel } from '../lib/dashboardFilters'
+import { formatQueryFiltersLabel } from '../lib/dashboardFilters'
 import { categoryMeta } from '../lib/reportConstants'
 import { canViewCustomReport } from '../lib/reportFilters'
-import { isDateVariable } from '../lib/sqlVariables'
 import {
   buildReportExportPermissions,
   hasAnyExportPermission,
@@ -40,17 +38,10 @@ export function ReportView() {
     queryFilters,
     hasDateVariables,
     dateFilters,
-    dateFiltersEnabled,
+    filtersReady,
     setVariable,
     setDateFilters,
   } = useReportVariables(report?.sql ?? '')
-
-  const customVariables = useMemo(
-    () => variables.filter((v) => !isDateVariable(v)),
-    [variables],
-  )
-
-  const dateFilterPending = hasDateVariables && !dateFiltersEnabled
 
   const exportPermissions = useMemo(() => {
     const perms = buildReportExportPermissions(hasPermission, reportId)
@@ -60,9 +51,13 @@ export function ReportView() {
   const exportContext = useMemo(
     () => ({
       reportDescription: report?.description ?? undefined,
-      filterLabel: hasDateVariables ? formatFilterLabel(dateFilters) : undefined,
+      filterLabel: formatQueryFiltersLabel(dateFilters, {
+        hasDateVariables,
+        variables,
+        values: variableValues,
+      }),
     }),
-    [report?.description, hasDateVariables, dateFilters],
+    [report?.description, hasDateVariables, dateFilters, variables, variableValues],
   )
 
   const loadReport = useCallback(async () => {
@@ -105,9 +100,9 @@ export function ReportView() {
   }, [loadReport])
 
   useEffect(() => {
-    if (!report || queryFilters === undefined || dateFilterPending) return
+    if (!report || queryFilters === undefined || !filtersReady) return
     runReport()
-  }, [report, queryFilters, dateFilterPending, runReport])
+  }, [report, queryFilters, filtersReady, runReport])
 
   if (!reportId) {
     return <Navigate to="/reports" replace />
@@ -136,9 +131,19 @@ export function ReportView() {
     <div className="flex h-full flex-col">
       <TopBar
         title={report?.name ?? 'Report'}
-        showDateFilter={hasDateVariables}
-        dateFilter={dateFilters}
-        onDateFilterChange={setDateFilters}
+        showDateFilter={false}
+        reportFilters={
+          variables.length > 0
+            ? {
+                variables,
+                values: variableValues,
+                hasDateVariables,
+                dateFilters,
+                onVariableChange: setVariable,
+                onDateFiltersChange: setDateFilters,
+              }
+            : undefined
+        }
         showExport={false}
         primaryAction={
           canEditInBuilder && report
@@ -174,24 +179,13 @@ export function ReportView() {
             </p>
           )}
 
-          {hasDateVariables && !dateFiltersEnabled && (
+          {!filtersReady && (
             <div className="shrink-0 border-b border-border bg-bg-secondary px-6 py-3 text-sm text-text-secondary">
               <i className="ti ti-filter-off mr-2"></i>
-              No date filter selected — choose a range in the header to load data.
+              {hasDateVariables && !dateFilters.enabled
+                ? 'No date filter selected — choose a range in the header filter to load data.'
+                : 'Set required report parameters in the header filter before this report can run.'}
             </div>
-          )}
-
-          {customVariables.length > 0 && (
-            <ReportVariablesPanel
-              variables={variables}
-              values={variableValues}
-              hasDateVariables={hasDateVariables}
-              dateFilters={dateFilters}
-              onVariableChange={setVariable}
-              onDateFiltersChange={setDateFilters}
-              hideDateFilter
-              compact
-            />
           )}
 
           <ReportRunDisplay
@@ -201,7 +195,7 @@ export function ReportView() {
             queryResult={queryResult}
             queryError={queryError}
             isRunning={isRunning}
-            dateFilterPending={dateFilterPending}
+            filtersPending={!filtersReady}
             showExport={showExport}
             exportContext={exportContext}
             exportPermissions={exportPermissions}

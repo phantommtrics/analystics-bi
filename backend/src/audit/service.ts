@@ -15,6 +15,18 @@ export type AuditLogFilters = {
   dateTo?: string
   user?: string
   action?: string
+  /** `Date.getTimezoneOffset()` from the client (minutes). */
+  tzOffsetMinutes?: number
+}
+
+function localDayStart(isoDate: string, tzOffsetMinutes: number): Date {
+  const [y, mo, d] = isoDate.split('-').map(Number)
+  return new Date(Date.UTC(y, mo - 1, d, 0, 0, 0, 0) + tzOffsetMinutes * 60_000)
+}
+
+function localDayEnd(isoDate: string, tzOffsetMinutes: number): Date {
+  const [y, mo, d] = isoDate.split('-').map(Number)
+  return new Date(Date.UTC(y, mo - 1, d, 23, 59, 59, 999) + tzOffsetMinutes * 60_000)
 }
 
 export type AuditLogRow = {
@@ -51,12 +63,13 @@ function buildWhere(filters: AuditLogFilters): Prisma.AuditLogWhereInput {
   const where: Prisma.AuditLogWhereInput = {}
 
   if (filters.dateFrom || filters.dateTo) {
+    const tzOffset = filters.tzOffsetMinutes ?? 0
     where.createdAt = {}
     if (filters.dateFrom) {
-      where.createdAt.gte = new Date(`${filters.dateFrom}T00:00:00.000Z`)
+      where.createdAt.gte = localDayStart(filters.dateFrom, tzOffset)
     }
     if (filters.dateTo) {
-      where.createdAt.lte = new Date(`${filters.dateTo}T23:59:59.999Z`)
+      where.createdAt.lte = localDayEnd(filters.dateTo, tzOffset)
     }
   }
 

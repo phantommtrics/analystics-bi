@@ -11,17 +11,54 @@ import {
   applyDateRangeToVariables,
   buildExecuteFilters,
   defaultValueForVariable,
-  extractSqlVariables,
+  extractSqlVariableDefs,
+  hasFilterValue,
   isDateVariable,
+  isRequiredVariable,
+  parseVariableToken,
   sqlHasDateVariables,
+  type SqlVariableDef,
 } from '../lib/sqlVariables'
 
-const RESERVED_PARAMS = new Set(['reportId', 'run', 'dateFilter', 'datePreset', 'dateFrom', 'dateTo'])
+const RESERVED_PARAMS = new Set([
+  'reportId',
+  'run',
+  'dashboardId',
+  'dateFilter',
+  'datePreset',
+  'dateFrom',
+  'dateTo',
+])
 
-export function useReportVariables(sql: string) {
+function mergeSqlVariableDefs(sources: string[]): SqlVariableDef[] {
+  const found = new Map<string, SqlVariableDef>()
+  for (const sql of sources) {
+    for (const def of extractSqlVariableDefs(sql)) {
+      found.set(def.token, def)
+    }
+  }
+  return [...found.values()].sort((a, b) => a.token.localeCompare(b.token))
+}
+
+export function useReportVariables(sql: string | string[]) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const variables = useMemo(() => extractSqlVariables(sql), [sql])
+
+  const sqlSources = useMemo(
+    () => (Array.isArray(sql) ? sql : [sql]),
+    [sql],
+  )
+
+  const variableDefs = useMemo(() => mergeSqlVariableDefs(sqlSources), [sqlSources])
+  const variables = useMemo(() => variableDefs.map((d) => d.token), [variableDefs])
   const hasDateVariables = useMemo(() => sqlHasDateVariables(variables), [variables])
+  const customVariableDefs = useMemo(
+    () => variableDefs.filter((d) => !isDateVariable(d.token)),
+    [variableDefs],
+  )
+  const customVariables = useMemo(
+    () => customVariableDefs.map((d) => d.token),
+    [customVariableDefs],
+  )
 
   const dateFilters = useMemo(
     () => filtersFromSearchParams(searchParams),
@@ -42,9 +79,12 @@ export function useReportVariables(sql: string) {
 
   const queryFilters = useMemo(() => {
     const custom: Record<string, string> = {}
-    for (const name of variables) {
-      if (!isDateVariable(name) && values[name]) {
-        custom[name] = values[name]
+    for (const def of customVariableDefs) {
+      const val = values[def.token]
+      if (hasFilterValue(val, def)) {
+        custom[def.token] = val
+      } else if (def.optional) {
+        custom[def.token] = ''
       }
     }
 
@@ -56,7 +96,14 @@ export function useReportVariables(sql: string) {
 
     if (Object.keys(custom).length === 0) return {}
     return buildExecuteFilters(custom)
-  }, [variables, values, hasDateVariables, dateFiltersEnabled, dateFilters])
+  }, [customVariableDefs, values, hasDateVariables, dateFiltersEnabled, dateFilters])
+
+  const filtersReady = useMemo(() => {
+    if (hasDateVariables && !dateFiltersEnabled) return false
+    return customVariableDefs
+      .filter(isRequiredVariable)
+      .every((def) => hasFilterValue(values[def.token], def))
+  }, [hasDateVariables, dateFiltersEnabled, customVariableDefs, values])
 
   const setVariable = useCallback(
     (name: string, value: string) => {
@@ -120,10 +167,8 @@ export function useReportVariables(sql: string) {
   )
 
   useEffect(() => {
-    if (variables.length === 0 || !dateFiltersEnabled) return
-    const missing = variables.filter(
-      (name) => !isDateVariable(name) && !searchParams.get(name),
-    )
+    if (customVariables.length === 0) return
+    const missing = customVariables.filter((name) => !searchParams.get(name))
     if (missing.length === 0) return
 
     setSearchParams(
@@ -132,6 +177,8 @@ export function useReportVariables(sql: string) {
         let changed = false
         for (const name of missing) {
           if (RESERVED_PARAMS.has(name)) continue
+          const def = parseVariableToken(name)
+          if (def.optional) continue
           const defaultVal = defaultValueForVariable(name)
           if (defaultVal) {
             next.set(name, defaultVal)
@@ -142,7 +189,7 @@ export function useReportVariables(sql: string) {
       },
       { replace: true },
     )
-  }, [variables, searchParams, setSearchParams, dateFiltersEnabled])
+  }, [customVariables, searchParams, setSearchParams])
 
   useEffect(() => {
     if (!hasDateVariables || !dateFiltersEnabled) return
@@ -164,11 +211,15 @@ export function useReportVariables(sql: string) {
 
   return {
     variables,
+    variableDefs,
+    customVariables,
+    customVariableDefs,
     values,
     queryFilters,
     hasDateVariables,
     dateFilters,
     dateFiltersEnabled,
+    filtersReady,
     setVariable,
     setDateRange,
     setDateFilters,

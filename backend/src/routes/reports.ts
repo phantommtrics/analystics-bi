@@ -6,6 +6,8 @@ import { authorize, authorizeAny } from '../middleware/authorize.js'
 import { executeDataSourceQuery } from '../datasources/service.js'
 import { dashboardContainsReport } from '../dashboards/service.js'
 import { userCanViewDashboard } from '../dashboards/permissions.js'
+import { statementContainsReport } from '../statements/service.js'
+import { userCanViewStatement } from '../statements/permissions.js'
 import {
   createSavedReport,
   getSavedReportById,
@@ -70,13 +72,15 @@ const updateReportSchema = z.object({
 const executeReportSchema = z.object({
   filters: z.record(z.string(), z.string().max(500)).optional(),
   dashboardId: z.string().min(1).optional(),
+  statementId: z.string().min(1).optional(),
 })
 
 function canUseReportBuilder(permissions: string[]) {
   return (
     permissions.includes('*') ||
     permissions.includes('report-builder:view') ||
-    permissions.includes('dashboard-builder:view')
+    permissions.includes('dashboard-builder:view') ||
+    permissions.includes('statement-builder:view')
   )
 }
 
@@ -181,7 +185,19 @@ reportsRouter.post('/:id/execute', async (req, res) => {
       )
   }
 
-  if (!canUseBuilder && !canViewCatalog && !canExecuteViaDashboard) {
+  let canExecuteViaStatement = false
+  if (parsed.data.statementId) {
+    const inStatement = await statementContainsReport(parsed.data.statementId, report.id)
+    canExecuteViaStatement =
+      inStatement &&
+      userCanViewStatement(
+        permissions,
+        parsed.data.statementId,
+        req.authUser?.userType,
+      )
+  }
+
+  if (!canUseBuilder && !canViewCatalog && !canExecuteViaDashboard && !canExecuteViaStatement) {
     return res.status(403).json({ message: 'Forbidden' })
   }
 

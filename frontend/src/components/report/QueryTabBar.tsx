@@ -1,4 +1,5 @@
 import type { QueryTab } from '../../lib/queryTabs'
+import { isQueryTabDirty } from '../../lib/queryTabs'
 
 interface QueryTabBarProps {
   tabs: QueryTab[]
@@ -19,6 +20,7 @@ export function QueryTabBar({
     <div className="flex min-w-0 items-end gap-0.5 overflow-x-auto border-b border-border bg-[#252526] px-1 pt-1">
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId
+        const dirty = isQueryTabDirty(tab)
         const hasResult = Boolean(tab.queryResult || tab.queryError)
         return (
           <div
@@ -43,7 +45,13 @@ export function QueryTabBar({
                   title="Saved report"
                 />
               )}
-              {hasResult && (
+              {dirty && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                  title="Unsaved changes"
+                />
+              )}
+              {!dirty && hasResult && (
                 <span
                   className={`h-1.5 w-1.5 shrink-0 rounded-full ${tab.queryError ? 'bg-semantic-red' : 'bg-semantic-green'}`}
                 />

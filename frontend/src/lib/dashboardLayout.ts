@@ -53,6 +53,19 @@ export function isReportWidget(widget: DashboardWidgetLayout): widget is ReportW
   return !isKpiWidget(widget)
 }
 
+/** Unique saved report IDs referenced by report widgets and live KPI cards. */
+export function collectReportIdsFromLayout(layout: DashboardLayout): string[] {
+  const ids = new Set<string>()
+  for (const widget of layout.widgets) {
+    if (isReportWidget(widget)) {
+      ids.add(widget.savedReportId)
+    } else if (widget.savedReportId) {
+      ids.add(widget.savedReportId)
+    }
+  }
+  return [...ids]
+}
+
 export function createWidgetId() {
   return `widget-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }

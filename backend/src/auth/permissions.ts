@@ -13,6 +13,7 @@ export const MODULES = [
   'remittance',
   'aml',
   'dashboard-builder',
+  'statement-builder',
   'schedules',
   'system-config-roles',
   'system-config-groups',

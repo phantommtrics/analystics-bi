@@ -1,6 +1,7 @@
 import type { QueryExecuteResult } from '../api/reportBuilder'
 import { dashboardModuleKey } from './dashboardFilters'
 import { reportModuleKey } from './reportFilters'
+import { statementModuleKey } from './statementFilters'
 import type { ReportVisualization } from './reportConstants'
 
 export type WidgetExportFormat = 'png' | 'csv' | 'pdf' | 'xlsx'
@@ -226,6 +227,29 @@ export function buildReportExportPermissions(
 ): WidgetExportPermissions {
   if (!reportId) return NO_EXPORT
   return canExportReport(hasPermission, reportId)
+}
+
+/** Parent Statements + per-statement RolePermission (export_pdf / export_csv). */
+export function canExportStatement(
+  hasPermission: (module: string, action: string) => boolean,
+  statementId: string,
+): WidgetExportPermissions {
+  const moduleKey = statementModuleKey(statementId)
+  const canPdf =
+    hasPermission('statements', 'export_pdf') &&
+    hasPermission(moduleKey, 'export_pdf')
+  const canCsv =
+    hasPermission('statements', 'export_csv') &&
+    hasPermission(moduleKey, 'export_csv')
+  return toExportPermissions(canPdf, canCsv)
+}
+
+export function buildStatementExportPermissions(
+  hasPermission: (module: string, action: string) => boolean,
+  statementId: string | undefined,
+): WidgetExportPermissions {
+  if (!statementId) return NO_EXPORT
+  return canExportStatement(hasPermission, statementId)
 }
 
 export function assertExportAllowed(

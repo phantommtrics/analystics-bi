@@ -199,7 +199,7 @@ export function DashboardWidget({
         {queryFilters === undefined && (
           <div className="flex h-full min-h-[80px] flex-col items-center justify-center gap-1 px-2 text-center text-xs text-text-secondary">
             <i className="ti ti-filter-off text-lg opacity-60"></i>
-            <p>Select a date filter to load data</p>
+            <p>Set report filters to load data</p>
           </div>
         )}
         {queryFilters !== undefined && error && (

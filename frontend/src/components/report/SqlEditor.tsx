@@ -1,27 +1,37 @@
-import { useCallback, useMemo, useRef } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useMemo, useRef } from 'react'
 import { highlightSql } from '../../lib/sqlHighlight'
 import '../../styles/sql-editor.css'
+
+export interface SqlEditorHandle {
+  focusAtStart: () => void
+}
 
 interface SqlEditorProps {
   value: string
   onChange: (value: string) => void
   className?: string
   minHeight?: string
+  /** Fixed visible line count; editor scrolls internally beyond this height. */
+  visibleLines?: number
 }
 
-export function SqlEditor({
-  value,
-  onChange,
-  className = '',
-  minHeight = '200px',
-}: SqlEditorProps) {
+const LINE_HEIGHT_PX = 22
+
+function countEditorLines(text: string): number {
+  if (text.length === 0) return 1
+  return text.split('\n').length
+}
+
+export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor(
+  { value, onChange, className = '', minHeight = '200px', visibleLines },
+  ref,
+) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const highlightRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
 
   const highlighted = useMemo(() => highlightSql(value), [value])
-
-  const lineCount = useMemo(() => Math.max(1, value.split('\n').length), [value])
+  const lineCount = useMemo(() => countEditorLines(value), [value])
 
   const lineNumbersText = useMemo(
     () => Array.from({ length: lineCount }, (_, i) => String(i + 1)).join('\n'),
@@ -44,6 +54,18 @@ export function SqlEditor({
     }
   }, [])
 
+  const focusAtStart = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus()
+    textarea.setSelectionRange(0, 0)
+    textarea.scrollTop = 0
+    textarea.scrollLeft = 0
+    syncScroll()
+  }, [syncScroll])
+
+  useImperativeHandle(ref, () => ({ focusAtStart }), [focusAtStart])
+
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key !== 'Tab') return
@@ -61,10 +83,19 @@ export function SqlEditor({
     [value, onChange],
   )
 
+  const fixedHeightStyle =
+    visibleLines != null && visibleLines > 0
+      ? {
+          height: `${visibleLines * LINE_HEIGHT_PX}px`,
+          minHeight: `${visibleLines * LINE_HEIGHT_PX}px`,
+          maxHeight: `${visibleLines * LINE_HEIGHT_PX}px`,
+        }
+      : undefined
+
   return (
     <div
-      className={`sql-editor flex min-h-0 flex-1 overflow-hidden font-mono text-sm leading-relaxed ${className}`}
-      style={{ minHeight }}
+      className={`sql-editor flex overflow-hidden ${visibleLines ? 'shrink-0' : 'min-h-0 flex-1'} ${className}`}
+      style={fixedHeightStyle ?? { minHeight }}
     >
       <div
         ref={gutterRef}
@@ -72,15 +103,15 @@ export function SqlEditor({
         className="sql-editor-gutter shrink-0 overflow-hidden border-r border-[#3c3c3c] bg-[#1b1b1b] text-[#858585] select-none"
         style={{ width: `${gutterWidthCh}ch` }}
       >
-        <pre className="m-0 px-2 py-0 text-right text-sm leading-relaxed">{lineNumbersText}</pre>
+        <pre className="sql-editor-code-layer text-right text-[#858585]">{lineNumbersText}</pre>
       </div>
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <pre
           ref={highlightRef}
           aria-hidden
-          className="sql-editor-highlight pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre-wrap break-words px-3 py-0"
-          dangerouslySetInnerHTML={{ __html: highlighted + '\n' }}
+          className="sql-editor-highlight sql-editor-code-layer pointer-events-none absolute inset-0 overflow-auto"
+          dangerouslySetInnerHTML={{ __html: highlighted }}
         />
         <textarea
           ref={textareaRef}
@@ -92,9 +123,10 @@ export function SqlEditor({
           autoCapitalize="off"
           autoComplete="off"
           autoCorrect="off"
-          className="sql-editor-input relative z-[1] m-0 block h-full min-h-[inherit] w-full resize-none overflow-auto whitespace-pre-wrap break-words border-0 bg-transparent px-3 py-0 text-transparent caret-[#aeafad] outline-none selection:bg-[#264f78] selection:text-transparent"
+          wrap="off"
+          className="sql-editor-input relative z-[1] block h-full min-h-0 w-full resize-none overflow-auto border-0 bg-transparent caret-[#aeafad] outline-none selection:bg-[#264f78]"
         />
       </div>
     </div>
   )
-}
+})

@@ -3,6 +3,7 @@ import type { Permission } from '../../api/admin'
 
 const CUSTOM_DASHBOARD_PREFIX = 'custom-dashboard-'
 const CUSTOM_REPORT_PREFIX = 'custom-report-'
+const CUSTOM_STATEMENT_PREFIX = 'custom-statement-'
 
 const ACTION_LABELS: Record<string, string> = {
   view: 'View',
@@ -30,8 +31,16 @@ function isCustomReportModule(key: string) {
   return key.startsWith(CUSTOM_REPORT_PREFIX)
 }
 
+function isCustomStatementModule(key: string) {
+  return key.startsWith(CUSTOM_STATEMENT_PREFIX)
+}
+
 function isCustomChildModule(key: string) {
-  return isCustomDashboardModule(key) || isCustomReportModule(key)
+  return (
+    isCustomDashboardModule(key) ||
+    isCustomReportModule(key) ||
+    isCustomStatementModule(key)
+  )
 }
 
 function formatModule(key: string, permissions: Permission[]) {
@@ -51,6 +60,13 @@ function formatModule(key: string, permissions: Permission[]) {
       return match.name
     }
     return 'Custom report'
+  }
+  if (isCustomStatementModule(key)) {
+    const match = permissions.find((p) => p.moduleKey === key)
+    if (match?.name) {
+      return match.name
+    }
+    return 'Custom statement'
   }
   return key
     .split('-')

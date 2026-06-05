@@ -26,6 +26,8 @@ interface ReportRunDisplayProps {
   queryError: string | null
   isRunning: boolean
   dateFilterPending?: boolean
+  /** When filters (date and/or SQL variables) are not ready to run. */
+  filtersPending?: boolean
   /** Catalog view: table only, table export formats (CSV/PDF/XLSX). */
   tableOnly?: boolean
   showExport?: boolean
@@ -40,6 +42,7 @@ export function ReportRunDisplay({
   queryError,
   isRunning,
   dateFilterPending = false,
+  filtersPending = false,
   tableOnly = false,
   showExport = false,
   exportContext,
@@ -81,12 +84,14 @@ export function ReportRunDisplay({
 
   const showTable = isRunning || (queryResult !== null && queryResult.rows.length > 0)
 
+  const pendingFilters = filtersPending || dateFilterPending
+
   const canExport =
     showExport &&
     !isRunning &&
     !queryError &&
     queryResult !== null &&
-    !dateFilterPending &&
+    !pendingFilters &&
     (isChartVisualization(effectiveVisualization)
       ? chartData.series.length > 0 || pieData.length > 0
       : queryResult.rows.length > 0)
@@ -107,11 +112,11 @@ export function ReportRunDisplay({
     }
   }
 
-  if (dateFilterPending) {
+  if (pendingFilters) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-sm text-text-secondary">
         <i className="ti ti-filter text-2xl opacity-60"></i>
-        <p>Select a date filter to load this report.</p>
+        <p>Set all report filters to load this report.</p>
       </div>
     )
   }

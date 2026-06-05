@@ -142,6 +142,117 @@ function serializeCell(value: unknown): unknown {
   return value
 }
 
+const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+function assertSafeIdentifier(name: string, label: string) {
+  if (!IDENTIFIER_PATTERN.test(name)) {
+    throw new Error(`Invalid ${label}`)
+  }
+}
+
+export type SchemaTable = {
+  schema: string
+  name: string
+  qualifiedName: string
+}
+
+export type SchemaColumn = {
+  name: string
+  dataType: string
+  nullable: boolean
+  defaultValue: string | null
+}
+
+export async function listSchemaTables(
+  dataSourceId: string,
+  config: PostgresConnectionConfig,
+  search = '',
+): Promise<SchemaTable[]> {
+  const pool = getOrCreatePool(dataSourceId, config)
+  const client = await pool.connect()
+  const trimmedSearch = search.trim().slice(0, 200)
+
+  try {
+    await configureReadOnlyClient(client)
+    await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`)
+
+    const result = await client.query<{
+      table_schema: string
+      table_name: string
+    }>(
+      `SELECT table_schema, table_name
+       FROM information_schema.tables
+       WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+         AND table_type = 'BASE TABLE'
+         AND (
+           $1 = '' OR
+           table_name ILIKE '%' || $1 || '%' OR
+           (table_schema || '.' || table_name) ILIKE '%' || $1 || '%'
+         )
+       ORDER BY table_schema, table_name
+       LIMIT 1000`,
+      [trimmedSearch],
+    )
+
+    return result.rows.map((row) => ({
+      schema: row.table_schema,
+      name: row.table_name,
+      qualifiedName:
+        row.table_schema === 'public'
+          ? row.table_name
+          : `${row.table_schema}.${row.table_name}`,
+    }))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to list tables'
+    throw new Error(sanitizeErrorMessage(message))
+  } finally {
+    client.release()
+  }
+}
+
+export async function getSchemaTableColumns(
+  dataSourceId: string,
+  config: PostgresConnectionConfig,
+  schema: string,
+  table: string,
+): Promise<SchemaColumn[]> {
+  assertSafeIdentifier(schema, 'schema name')
+  assertSafeIdentifier(table, 'table name')
+
+  const pool = getOrCreatePool(dataSourceId, config)
+  const client = await pool.connect()
+
+  try {
+    await configureReadOnlyClient(client)
+    await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`)
+
+    const result = await client.query<{
+      column_name: string
+      data_type: string
+      is_nullable: string
+      column_default: string | null
+    }>(
+      `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = $2
+       ORDER BY ordinal_position`,
+      [schema, table],
+    )
+
+    return result.rows.map((row) => ({
+      name: row.column_name,
+      dataType: row.data_type,
+      nullable: row.is_nullable === 'YES',
+      defaultValue: row.column_default,
+    }))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to load columns'
+    throw new Error(sanitizeErrorMessage(message))
+  } finally {
+    client.release()
+  }
+}
+
 export async function executeReadOnlyQuery(
   dataSourceId: string,
   config: PostgresConnectionConfig,

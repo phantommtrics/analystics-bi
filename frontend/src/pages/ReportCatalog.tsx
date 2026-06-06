@@ -5,6 +5,7 @@ import { Badge } from '../components/ui/Badge'
 import { Card } from '../components/ui/Card'
 import { ConfirmModal } from '../components/ui/ConfirmModal'
 import { ScrollableTabList } from '../components/ui/ScrollableTabList'
+import { TablePagination } from '../components/ui/TablePagination'
 import { reportsApi, type SavedReportSummary } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
 import {
@@ -13,6 +14,10 @@ import {
   formatReportDate,
   type ReportCategory,
 } from '../lib/reportConstants'
+import { paginateRows } from '../lib/queryResultTable'
+
+const CATALOG_PAGE_SIZES = [10, 25, 50] as const
+const DEFAULT_CATALOG_PAGE_SIZE = 10
 
 const categoryFilters: Array<{ value: 'All' | ReportCategory; label: string }> = [
   { value: 'All', label: 'All' },
@@ -32,6 +37,8 @@ export function ReportCatalog() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<'All' | ReportCategory>('All')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_CATALOG_PAGE_SIZE)
   const [pendingDelete, setPendingDelete] = useState<SavedReportSummary | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
@@ -53,7 +60,21 @@ export function ReportCatalog() {
       .finally(() => setLoading(false))
   }, [accessToken, loadReports])
 
-  const filteredReports = useMemo(() => reports, [reports])
+  useEffect(() => {
+    setPage(1)
+  }, [search, activeCategory])
+
+  useEffect(() => {
+    const pages = Math.max(1, Math.ceil(reports.length / pageSize))
+    if (page > pages) {
+      setPage(pages)
+    }
+  }, [reports.length, page, pageSize])
+
+  const paginatedReports = useMemo(
+    () => paginateRows(reports, page, pageSize),
+    [reports, page, pageSize],
+  )
 
   function openInBuilder(reportId: string) {
     navigate(`/reports/builder?reportId=${encodeURIComponent(reportId)}`)
@@ -130,9 +151,9 @@ export function ReportCatalog() {
               <>
                 Showing{' '}
                 <span className="font-medium text-text-primary">
-                  {filteredReports.length}
+                  {reports.length}
                 </span>{' '}
-                saved report{filteredReports.length === 1 ? '' : 's'}
+                saved report{reports.length === 1 ? '' : 's'}
                 {!loading && ' you can access'}
               </>
             )}
@@ -141,9 +162,8 @@ export function ReportCatalog() {
 
         <Card noPadding className="overflow-hidden">
           <div className="hidden grid-cols-12 gap-4 border-b border-border bg-bg-secondary px-5 py-3 text-micro font-medium uppercase tracking-wider text-text-secondary md:grid">
-            <div className="col-span-4">Report</div>
+            <div className="col-span-6">Report</div>
             <div className="col-span-2">Category</div>
-            <div className="col-span-2">Data source</div>
             <div className="col-span-2">Updated</div>
             <div className="col-span-2 text-right">Actions</div>
           </div>
@@ -153,7 +173,7 @@ export function ReportCatalog() {
               <div className="py-16 text-center text-sm text-text-secondary">
                 Loading reports...
               </div>
-            ) : filteredReports.length === 0 ? (
+            ) : reports.length === 0 ? (
               <div className="py-16 text-center text-text-secondary">
                 <i className="ti ti-file-search mb-2 block text-3xl"></i>
                 <p className="text-sm">No published reports available</p>
@@ -167,25 +187,25 @@ export function ReportCatalog() {
                 )}
               </div>
             ) : (
-              filteredReports.map((report) => {
+              paginatedReports.map((report) => {
                 const meta = categoryMeta[report.category]
 
                 return (
                   <div
                     key={report.id}
-                    className="group grid grid-cols-12 items-center gap-4 px-5 py-4 transition-colors hover:bg-bg-tertiary"
+                    className="group grid grid-cols-12 items-start gap-4 px-5 py-4 transition-colors hover:bg-bg-tertiary"
                   >
-                    <div className="col-span-12 flex min-w-0 items-center gap-3 md:col-span-4">
+                    <div className="col-span-12 flex min-w-0 items-start gap-3 md:col-span-6">
                       <div
                         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-brand-blue/10 text-brand-blue`}
                       >
                         <i className={`ti ${meta.icon} text-xl`}></i>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-text-primary">
+                        <div className="break-words text-sm font-medium leading-snug text-text-primary">
                           {report.name}
                         </div>
-                        <div className="mt-0.5 line-clamp-1 text-xs text-text-secondary">
+                        <div className="mt-0.5 line-clamp-2 break-words text-xs text-text-secondary">
                           {report.description || 'No description'}
                           {report.createdByUsername
                             ? ` · ${report.createdByUsername}`
@@ -196,13 +216,6 @@ export function ReportCatalog() {
 
                     <div className="col-span-6 md:col-span-2">
                       <Badge variant={meta.badgeVariant}>{meta.label}</Badge>
-                    </div>
-
-                    <div className="col-span-6 text-xs text-text-secondary md:col-span-2">
-                      <div className="font-medium text-text-primary">
-                        {report.dataSourceName}
-                      </div>
-                      <div>{report.dataSourceDatabase}</div>
                     </div>
 
                     <div className="col-span-6 text-xs text-text-secondary md:col-span-2">
@@ -245,6 +258,19 @@ export function ReportCatalog() {
               })
             )}
           </div>
+          {!loading && reports.length > 0 && (
+            <TablePagination
+              page={page}
+              pageSize={pageSize}
+              totalRows={reports.length}
+              pageSizeOptions={CATALOG_PAGE_SIZES}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size)
+                setPage(1)
+              }}
+            />
+          )}
         </Card>
       </div>
 

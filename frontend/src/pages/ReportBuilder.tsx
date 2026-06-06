@@ -535,8 +535,8 @@ export function ReportBuilder() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 flex-col overflow-hidden lg:flex-row">
           <ReportBuilderSidebar
             reports={savedReports}
             activeReportId={activeReportId}
@@ -549,7 +549,7 @@ export function ReportBuilder() {
             onDelete={setPendingDelete}
           />
 
-          <div className="flex min-w-0 flex-1 flex-col bg-bg-primary">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-bg-secondary px-4 py-2.5">
               <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -658,7 +658,7 @@ export function ReportBuilder() {
               onDateFiltersChange={setDateFilters}
             />
 
-            <div className="shrink-0 bg-[#1e1e1e] px-4 pb-2 pt-2 text-[#d4d4d4]">
+            <div className="relative isolate shrink-0 overflow-hidden bg-[#1e1e1e] px-4 pb-2 pt-2 text-[#d4d4d4]">
               <p className="mb-1.5 text-[11px] text-[#858585]">
                 SQL editor · scroll inside the editor for longer queries
               </p>
@@ -672,7 +672,7 @@ export function ReportBuilder() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 divide-y divide-border border-t border-border lg:grid-cols-[minmax(260px,32%)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
+        <div className="relative z-[1] grid min-h-0 flex-1 grid-cols-1 divide-y divide-border border-t border-border bg-bg-primary lg:grid-cols-[minmax(260px,32%)_minmax(0,1fr)] lg:divide-x lg:divide-y-0">
           <div className="flex min-h-0 min-w-0 flex-col bg-bg-primary">
             {accessToken && (
               <DatabaseTableExplorer

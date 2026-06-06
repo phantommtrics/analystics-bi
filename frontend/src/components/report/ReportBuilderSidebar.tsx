@@ -1,8 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Badge } from '../ui/Badge'
 import { LoadingButton } from '../ui/LoadingButton'
+import { TablePagination } from '../ui/TablePagination'
 import type { SavedReportSummary } from '../../api/reports'
 import { categoryMeta, formatReportDate } from '../../lib/reportConstants'
+import { paginateRows } from '../../lib/queryResultTable'
+
+const SIDEBAR_PAGE_SIZES = [6, 12, 20] as const
+const DEFAULT_SIDEBAR_PAGE_SIZE = 6
 
 interface ReportBuilderSidebarProps {
   reports: SavedReportSummary[]
@@ -28,6 +33,8 @@ export function ReportBuilderSidebar({
   onDelete,
 }: ReportBuilderSidebarProps) {
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_SIDEBAR_PAGE_SIZE)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -40,13 +47,39 @@ export function ReportBuilderSidebar({
     )
   }, [reports, search])
 
+  const paginatedReports = useMemo(
+    () => paginateRows(filtered, page, pageSize),
+    [filtered, page, pageSize],
+  )
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
+  useEffect(() => {
+    const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
+    if (page > pages) {
+      setPage(pages)
+    }
+  }, [filtered.length, page, pageSize])
+
+  useEffect(() => {
+    if (!activeReportId || filtered.length === 0) return
+    const idx = filtered.findIndex((r) => r.id === activeReportId)
+    if (idx === -1) return
+    const pageForActive = Math.floor(idx / pageSize) + 1
+    setPage((current) => (current === pageForActive ? current : pageForActive))
+  }, [activeReportId, filtered, pageSize])
+
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-border bg-bg-primary lg:w-[280px] lg:border-b-0 lg:border-r">
+    <aside className="flex w-full shrink-0 flex-col border-b border-border bg-bg-primary lg:h-full lg:max-h-full lg:w-[280px] lg:border-b-0 lg:border-r">
       <div className="border-b border-border px-4 py-4">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Saved reports</h2>
-            <p className="text-xs text-text-secondary">{reports.length} total</p>
+            <p className="text-xs text-text-secondary">
+              {search.trim() ? `${filtered.length} of ${reports.length}` : reports.length} total
+            </p>
           </div>
           {canEdit && (
             <LoadingButton
@@ -80,7 +113,7 @@ export function ReportBuilderSidebar({
           </p>
         ) : (
           <ul className="space-y-1">
-            {filtered.map((report) => {
+            {paginatedReports.map((report) => {
               const meta = categoryMeta[report.category]
               const isOpen = openReportIds.includes(report.id)
               const isActive = report.id === activeReportId || isOpen
@@ -142,6 +175,21 @@ export function ReportBuilderSidebar({
           </ul>
         )}
       </div>
+
+      {!loading && filtered.length > 0 && (
+        <TablePagination
+          compact
+          page={page}
+          pageSize={pageSize}
+          totalRows={filtered.length}
+          pageSizeOptions={SIDEBAR_PAGE_SIZES}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setPage(1)
+          }}
+        />
+      )}
     </aside>
   )
 }

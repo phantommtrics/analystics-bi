@@ -94,7 +94,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
 
   return (
     <div
-      className={`sql-editor flex overflow-hidden ${visibleLines ? 'shrink-0' : 'min-h-0 flex-1'} ${className}`}
+      className={`sql-editor flex max-h-full overflow-hidden ${visibleLines ? 'shrink-0' : 'min-h-0 flex-1'} ${className}`}
       style={fixedHeightStyle ?? { minHeight }}
     >
       <div
@@ -106,11 +106,11 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
         <pre className="sql-editor-code-layer text-right text-[#858585]">{lineNumbersText}</pre>
       </div>
 
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+      <div className="relative h-full min-h-0 min-w-0 flex-1 overflow-hidden">
         <pre
           ref={highlightRef}
           aria-hidden
-          className="sql-editor-highlight sql-editor-code-layer pointer-events-none absolute inset-0 overflow-auto"
+          className="sql-editor-highlight sql-editor-code-layer pointer-events-none absolute inset-0 overflow-hidden"
           dangerouslySetInnerHTML={{ __html: highlighted }}
         />
         <textarea

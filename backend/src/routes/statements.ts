@@ -59,6 +59,17 @@ const updateStatementSchema = z.object({
   config: configSchema.optional(),
 })
 
+function validationErrorBody(error: z.ZodError) {
+  const first = error.issues[0]
+  const detail = first
+    ? `${first.path.length > 0 ? `${first.path.join('.')}: ` : ''}${first.message}`
+    : 'Validation failed'
+  return {
+    message: detail,
+    issues: error.flatten(),
+  }
+}
+
 function parseConfigForType(type: StatementType, config: unknown): StatementConfig {
   return parseStatementConfig(type, config)
 }
@@ -246,7 +257,7 @@ statementsRouter.post('/:id/unpublish', editStatements, async (req, res) => {
 statementsRouter.post('/', editStatements, async (req, res) => {
   const parsed = createStatementSchema.safeParse(req.body)
   if (!parsed.success) {
-    return res.status(400).json({ message: 'Invalid payload' })
+    return res.status(400).json(validationErrorBody(parsed.error))
   }
 
   try {
@@ -270,7 +281,7 @@ statementsRouter.post('/', editStatements, async (req, res) => {
       }
     }
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ message: 'Invalid statement configuration' })
+      return res.status(400).json(validationErrorBody(error))
     }
     throw error
   }
@@ -279,7 +290,7 @@ statementsRouter.post('/', editStatements, async (req, res) => {
 statementsRouter.patch('/:id', editStatements, async (req, res) => {
   const parsed = updateStatementSchema.safeParse(req.body)
   if (!parsed.success) {
-    return res.status(400).json({ message: 'Invalid payload' })
+    return res.status(400).json(validationErrorBody(parsed.error))
   }
 
   try {
@@ -315,7 +326,7 @@ statementsRouter.patch('/:id', editStatements, async (req, res) => {
       }
     }
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ message: 'Invalid statement configuration' })
+      return res.status(400).json(validationErrorBody(error))
     }
     throw error
   }

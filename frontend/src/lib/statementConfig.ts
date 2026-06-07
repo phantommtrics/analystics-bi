@@ -1,6 +1,7 @@
+import type { CustomStatementColumnDef } from './statementColumnFormat'
 import { getRowCell } from './kpiReportData'
 
-export type StatementType = 'FINANCIAL_PL' | 'BANK_STATEMENT' | 'LEDGER_BALANCE'
+export type StatementType = 'FINANCIAL_PL' | 'BANK_STATEMENT' | 'LEDGER_BALANCE' | 'CUSTOM'
 
 export type StatementRowType = 'header' | 'subtotal' | 'total' | 'normal'
 
@@ -55,7 +56,16 @@ export interface LedgerBalanceConfig extends StatementConfigBase {
   }
 }
 
-export type StatementConfig = FinancialPlConfig | BankStatementConfig | LedgerBalanceConfig
+export interface CustomStatementConfig extends Omit<StatementConfigBase, 'customColumns'> {
+  columns: CustomStatementColumnDef[]
+  groupByColumn?: string
+}
+
+export type StatementConfig =
+  | FinancialPlConfig
+  | BankStatementConfig
+  | LedgerBalanceConfig
+  | CustomStatementConfig
 
 export function extractReportIdsFromConfig(config: StatementConfig): string[] {
   const ids = [config.dataReportId]
@@ -87,6 +97,20 @@ export function emptyLedgerBalanceConfig(): LedgerBalanceConfig {
   }
 }
 
+export function emptyCustomStatementConfig(): CustomStatementConfig {
+  return {
+    dataReportId: '',
+    columns: [
+      {
+        id: createStatementCustomColumnId(),
+        header: '',
+        sourceColumn: '',
+        dataType: 'text',
+      },
+    ],
+  }
+}
+
 export function emptyConfigForType(type: StatementType): StatementConfig {
   switch (type) {
     case 'FINANCIAL_PL':
@@ -95,6 +119,66 @@ export function emptyConfigForType(type: StatementType): StatementConfig {
       return emptyBankStatementConfig()
     case 'LEDGER_BALANCE':
       return emptyLedgerBalanceConfig()
+    case 'CUSTOM':
+      return emptyCustomStatementConfig()
+  }
+}
+
+function trimOptional(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function sanitizeConfigBase<T extends StatementConfigBase>(config: T): T {
+  const next: StatementConfigBase = {
+    ...config,
+    dataReportId: config.dataReportId.trim(),
+    headerTitle: trimOptional(config.headerTitle),
+    headerSubtitle: trimOptional(config.headerSubtitle),
+    headerReportId: trimOptional(config.headerReportId),
+  }
+
+  if (config.customColumns) {
+    const customColumns = config.customColumns.filter(
+      (column) => column.header.trim().length > 0 && column.sourceColumn.trim().length > 0,
+    )
+    next.customColumns = customColumns.length > 0 ? customColumns : undefined
+  }
+
+  return next as T
+}
+
+/** Normalize config before API save so optional fields and draft rows validate. */
+export function sanitizeStatementConfigForSave(
+  type: StatementType,
+  config: StatementConfig,
+): StatementConfig {
+  switch (type) {
+    case 'FINANCIAL_PL':
+      return sanitizeConfigBase(config as FinancialPlConfig)
+    case 'BANK_STATEMENT':
+      return sanitizeConfigBase(config as BankStatementConfig)
+    case 'LEDGER_BALANCE': {
+      const next = sanitizeConfigBase(config as LedgerBalanceConfig)
+      return {
+        ...next,
+        groupByColumn: trimOptional(next.groupByColumn),
+      }
+    }
+    case 'CUSTOM': {
+      const custom = config as CustomStatementConfig
+      const next = sanitizeConfigBase(custom)
+      return {
+        ...next,
+        groupByColumn: trimOptional(custom.groupByColumn),
+        columns: custom.columns.map((column) => ({
+          ...column,
+          header: column.header.trim(),
+          sourceColumn: column.sourceColumn.trim(),
+          currency: trimOptional(column.currency),
+        })),
+      }
+    }
   }
 }
 

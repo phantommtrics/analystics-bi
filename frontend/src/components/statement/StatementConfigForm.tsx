@@ -1,13 +1,16 @@
 import type { SavedReportSummary } from '../../api/reports'
 import type {
   BankStatementConfig,
+  CustomStatementConfig,
   FinancialPlConfig,
   LedgerBalanceConfig,
   StatementConfig,
+  StatementConfigBase,
   StatementType,
 } from '../../lib/statementConfig'
 import { ColumnMappingSelect, ReportSelect } from './ColumnMappingSelect'
 import { CustomColumnsSection } from './CustomColumnsSection'
+import { CustomStatementColumnsEditor } from './CustomStatementColumnsEditor'
 
 interface StatementConfigFormProps {
   type: StatementType
@@ -18,7 +21,7 @@ interface StatementConfigFormProps {
   onChange: (config: StatementConfig) => void
 }
 
-function CustomColumnsBlock<T extends StatementConfig>({
+function CustomColumnsBlock<T extends StatementConfigBase>({
   config,
   columns,
   sampleRow,
@@ -369,6 +372,16 @@ export function StatementConfigForm({
       return (
         <LedgerBalanceForm
           config={config as LedgerBalanceConfig}
+          reports={reports}
+          columns={columns}
+          sampleRow={sampleRow}
+          onChange={onChange}
+        />
+      )
+    case 'CUSTOM':
+      return (
+        <CustomStatementColumnsEditor
+          config={config as CustomStatementConfig}
           reports={reports}
           columns={columns}
           sampleRow={sampleRow}

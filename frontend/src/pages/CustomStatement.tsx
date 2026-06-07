@@ -34,7 +34,8 @@ export function CustomStatement() {
 
   const { sqlSources, loading: sqlLoading } = useStatementReportSql(
     accessToken,
-    statement?.config,
+    statement?.config.dataReportId,
+    statement?.config.headerReportId,
   )
   const {
     variables,
@@ -52,7 +53,8 @@ export function CustomStatement() {
 
   const { data, headerData, loading: dataLoading, error: dataError } = useStatementData(
     accessToken,
-    statement?.config,
+    statement?.config.dataReportId,
+    statement?.config.headerReportId,
     effectiveQueryFilters,
     statement?.isPublished ? id : undefined,
   )

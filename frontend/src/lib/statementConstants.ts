@@ -24,6 +24,12 @@ export const STATEMENT_TYPES: Array<{
     description: 'Account balance grid with debit, credit, and net columns',
     icon: 'ti-scale',
   },
+  {
+    value: 'CUSTOM',
+    label: 'Custom Table',
+    description: 'Define your own columns with data types, currency, and formatting',
+    icon: 'ti-table',
+  },
 ]
 
 export function statementTypeMeta(type: StatementType) {

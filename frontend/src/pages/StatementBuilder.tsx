@@ -15,12 +15,14 @@ import {
   type StatementSummary,
 } from '../api/statements'
 import { useAuth } from '../auth/AuthContext'
+import { useStatementColumns } from '../hooks/useStatementColumns'
 import { useStatementData } from '../hooks/useStatementData'
 import { useStatementReportSql } from '../hooks/useStatementReportSql'
 import { useReportVariables } from '../hooks/useReportVariables'
 import type { ReportCategory } from '../lib/reportConstants'
 import {
   emptyConfigForType,
+  sanitizeStatementConfigForSave,
   type StatementConfig,
   type StatementType,
 } from '../lib/statementConfig'
@@ -50,8 +52,6 @@ export function StatementBuilder() {
 
   const [tabs, setTabs] = useState<StatementTab[]>([initialTab])
   const [activeTabId, setActiveTabId] = useState(initialTab.id)
-  const [columns, setColumns] = useState<string[]>([])
-  const [columnsLoading, setColumnsLoading] = useState(false)
 
   const [isSaving, setIsSaving] = useState(false)
   const [bannerError, setBannerError] = useState('')
@@ -82,10 +82,12 @@ export function StatementBuilder() {
 
   const { sqlSources, loading: sqlLoading } = useStatementReportSql(
     accessToken,
-    activeTab.config,
+    activeTab.config.dataReportId || undefined,
+    activeTab.config.headerReportId,
   )
   const {
     variables,
+    variableDefs,
     values: variableValues,
     queryFilters,
     hasDateVariables,
@@ -100,9 +102,21 @@ export function StatementBuilder() {
 
   const { data, headerData, loading: dataLoading, error: dataError } = useStatementData(
     accessToken,
-    activeTab.config.dataReportId ? activeTab.config : null,
+    activeTab.config.dataReportId || undefined,
+    activeTab.config.headerReportId,
     effectiveQueryFilters,
     activeTab.isPublished ? activeTab.savedStatementId ?? undefined : undefined,
+  )
+
+  const { columns } = useStatementColumns(
+    accessToken,
+    activeTab.config.dataReportId || undefined,
+    data,
+    {
+      queryFilters: effectiveQueryFilters,
+      variableDefs,
+      values: variableValues,
+    },
   )
 
   const openStatementIds = useMemo(
@@ -195,31 +209,6 @@ export function StatementBuilder() {
     )
   }, [accessToken, searchParams, tabs, activeTabId, loadStatementById])
 
-  useEffect(() => {
-    if (!accessToken || !activeTab.config.dataReportId) {
-      setColumns([])
-      return
-    }
-
-    let cancelled = false
-    setColumnsLoading(true)
-    reportsApi
-      .execute(accessToken, activeTab.config.dataReportId, {})
-      .then((result) => {
-        if (!cancelled) setColumns(result.columns)
-      })
-      .catch(() => {
-        if (!cancelled) setColumns([])
-      })
-      .finally(() => {
-        if (!cancelled) setColumnsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [accessToken, activeTab.config.dataReportId])
-
   function handleNewStatement(type: StatementType) {
     if (dirty && !window.confirm('Discard unsaved changes and start a new statement?')) {
       return
@@ -293,8 +282,10 @@ export function StatementBuilder() {
     setIsSaving(true)
     setBannerError('')
     try {
-      const nextConfig =
-        data.type !== activeTab.type ? emptyConfigForType(data.type) : activeTab.config
+      const nextConfig = sanitizeStatementConfigForSave(
+        data.type,
+        data.type !== activeTab.type ? emptyConfigForType(data.type) : activeTab.config,
+      )
       const payload = {
         name: data.name,
         description: data.description || null,
@@ -419,8 +410,8 @@ export function StatementBuilder() {
   }
 
   const previewLoading = useMemo(
-    () => dataLoading || sqlLoading || !filtersReady || columnsLoading,
-    [dataLoading, sqlLoading, filtersReady, columnsLoading],
+    () => dataLoading || sqlLoading || !filtersReady,
+    [dataLoading, sqlLoading, filtersReady],
   )
 
   return (

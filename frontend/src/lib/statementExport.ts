@@ -1,12 +1,18 @@
 import type { QueryExecuteResult } from '../api/reportBuilder'
 import { activeCustomColumns, formatCustomColumnValue } from './statementCustomColumns'
+import {
+  activeCustomStatementColumns,
+  formatCustomStatementCell,
+} from './statementColumnFormat'
 import type {
   BankStatementConfig,
+  CustomStatementConfig,
   FinancialPlConfig,
   LedgerBalanceConfig,
   StatementConfig,
   StatementType,
 } from './statementConfig'
+import { cellValue } from './statementConfig'
 
 function cellString(row: Record<string, unknown>, column?: string): string {
   if (!column) return ''
@@ -133,6 +139,23 @@ export function statementToExportResult(
         return out
       })
 
+      return { columns, rows: exportRows, rowCount: exportRows.length, latencyMs, truncated }
+    }
+    case 'CUSTOM': {
+      const customConfig = config as CustomStatementConfig
+      const columnDefs = activeCustomStatementColumns(customConfig.columns)
+      const columns = columnDefs.map((column) => column.header)
+      const exportRows = rows.map((row) => {
+        const out: Record<string, string> = {}
+        for (const column of columnDefs) {
+          const raw = cellValue(row, column.sourceColumn)
+          out[column.header] =
+            raw === null || raw === undefined || raw === ''
+              ? ''
+              : formatCustomStatementCell(raw, column)
+        }
+        return out
+      })
       return { columns, rows: exportRows, rowCount: exportRows.length, latencyMs, truncated }
     }
     default:

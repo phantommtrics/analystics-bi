@@ -71,6 +71,7 @@ enum StatementType {
   FINANCIAL_PL
   BANK_STATEMENT
   LEDGER_BALANCE
+  CUSTOM
 }
 
 model User {

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { reportsApi } from '../api/reports'
-import { extractReportIdsFromConfig, type StatementConfig } from '../lib/statementConfig'
 
 export function useStatementReportSql(
   accessToken: string | null,
-  config: StatementConfig | null | undefined,
+  dataReportId: string | undefined,
+  headerReportId?: string | undefined,
 ) {
-  const reportIds = useMemo(
-    () => (config ? extractReportIdsFromConfig(config) : []),
-    [config],
-  )
+  const reportIds = useMemo(() => {
+    const ids = [dataReportId, headerReportId].filter((id): id is string => Boolean(id))
+    return [...new Set(ids)]
+  }, [dataReportId, headerReportId])
+
   const reportIdsKey = reportIds.join(',')
 
   const [sqlByReportId, setSqlByReportId] = useState<Record<string, string>>({})
@@ -46,7 +47,7 @@ export function useStatementReportSql(
     return () => {
       cancelled = true
     }
-  }, [accessToken, reportIdsKey, reportIds.length])
+  }, [accessToken, reportIdsKey])
 
   const sqlSources = useMemo(
     () => reportIds.map((id) => sqlByReportId[id]).filter((sql): sql is string => Boolean(sql)),

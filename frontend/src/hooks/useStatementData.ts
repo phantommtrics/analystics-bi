@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { QueryExecuteResult } from '../api/reportBuilder'
 import { reportsApi } from '../api/reports'
-import type { StatementConfig } from '../lib/statementConfig'
 
 type StatementDataState = {
   data: QueryExecuteResult | null
@@ -12,7 +11,8 @@ type StatementDataState = {
 
 export function useStatementData(
   accessToken: string | null,
-  config: StatementConfig | null | undefined,
+  dataReportId: string | undefined,
+  headerReportId: string | undefined,
   queryFilters: Record<string, string> | undefined,
   statementId?: string,
 ) {
@@ -22,39 +22,38 @@ export function useStatementData(
     loading: false,
     error: '',
   })
+  const requestIdRef = useRef(0)
 
   const filtersKey = queryFilters ? JSON.stringify(queryFilters) : ''
-  const dataReportId = config?.dataReportId ?? ''
-  const headerReportId = config?.headerReportId ?? ''
 
   const load = useCallback(async () => {
-    if (!accessToken || !config?.dataReportId || !queryFilters) {
+    if (!accessToken || !dataReportId || !queryFilters) {
       setState({ data: null, headerData: null, loading: false, error: '' })
       return
     }
 
+    const requestId = ++requestIdRef.current
     setState((prev) => ({ ...prev, loading: true, error: '' }))
+
     try {
       const executeOptions = statementId ? { statementId } : undefined
-      const data = await reportsApi.execute(
+      const dataPromise = reportsApi.execute(
         accessToken,
-        config.dataReportId,
+        dataReportId,
         queryFilters,
         executeOptions,
       )
+      const headerPromise = headerReportId
+        ? reportsApi.execute(accessToken, headerReportId, queryFilters, executeOptions)
+        : Promise.resolve(null)
 
-      let headerData: QueryExecuteResult | null = null
-      if (config.headerReportId) {
-        headerData = await reportsApi.execute(
-          accessToken,
-          config.headerReportId,
-          queryFilters,
-          executeOptions,
-        )
-      }
+      const [data, headerData] = await Promise.all([dataPromise, headerPromise])
+
+      if (requestId !== requestIdRef.current) return
 
       setState({ data, headerData, loading: false, error: '' })
     } catch (err) {
+      if (requestId !== requestIdRef.current) return
       setState({
         data: null,
         headerData: null,
@@ -62,10 +61,10 @@ export function useStatementData(
         error: err instanceof Error ? err.message : 'Failed to load statement data',
       })
     }
-  }, [accessToken, config, queryFilters, statementId])
+  }, [accessToken, dataReportId, headerReportId, queryFilters, statementId])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load, filtersKey, dataReportId, headerReportId])
 
   return { ...state, reload: load }

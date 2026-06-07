@@ -2,15 +2,29 @@ import { StatementType } from '@prisma/client'
 import type { ExecuteQueryResult } from '../datasources/postgres.js'
 import {
   type BankStatementConfig,
+  type CustomStatementConfig,
   type FinancialPlConfig,
   type LedgerBalanceConfig,
   type StatementConfig,
   parseStatementConfig,
 } from './config.js'
+import {
+  activeCustomStatementColumns,
+  formatCustomStatementCell,
+  type CustomStatementColumnDef,
+} from './columnFormat.js'
+
+function getRowCell(row: Record<string, unknown>, column: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(row, column)) {
+    return row[column]
+  }
+  const key = Object.keys(row).find((k) => k.toLowerCase() === column.toLowerCase())
+  return key !== undefined ? row[key] : undefined
+}
 
 function cellString(row: Record<string, unknown>, column?: string): string {
   if (!column) return ''
-  const value = row[column]
+  const value = getRowCell(row, column)
   if (value === null || value === undefined) return ''
   return String(value)
 }
@@ -157,6 +171,31 @@ export function statementToExportResult(
 
       return {
         columns,
+        rows: exportRows,
+        rowCount: exportRows.length,
+        latencyMs,
+        truncated,
+      }
+    }
+    case StatementType.CUSTOM: {
+      const customConfig = config as CustomStatementConfig
+      const columnDefs = activeCustomStatementColumns(
+        customConfig.columns as CustomStatementColumnDef[],
+      )
+      const exportColumns = columnDefs.map((column) => column.header)
+      const exportRows = rows.map((row) => {
+        const out: Record<string, string> = {}
+        for (const column of columnDefs) {
+          const raw = getRowCell(row, column.sourceColumn)
+          out[column.header] =
+            raw === null || raw === undefined || raw === ''
+              ? ''
+              : formatCustomStatementCell(raw, column)
+        }
+        return out
+      })
+      return {
+        columns: exportColumns,
         rows: exportRows,
         rowCount: exportRows.length,
         latencyMs,

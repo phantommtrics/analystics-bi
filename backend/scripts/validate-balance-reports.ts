@@ -1,6 +1,38 @@
 import 'dotenv/config'
 import { prisma } from '../src/prisma.ts'
 import { executeDataSourceQuery } from '../src/datasources/service.ts'
+import { applySqlFilters } from '../src/reports/sqlFilters.ts'
+
+/** Prefer Active profile when the same mobile exists in multiple profile tables or rows. */
+const PROFILE_DEDUPE_ORDER = `
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+`
+
+/** Customer wallet balances live on entity "Customer" — use Customer hierarchy, not the user's agent hierarchy. */
+const CUSTOMER_HIERARCHY_CTES = `
+customer_entity AS (
+  SELECT id FROM entities_d WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_d WHERE name = 'Customer' LIMIT 1
+)`
 
 const ENTITY_BALANCE_SUMMARY = `
 WITH entities_d AS (
@@ -31,60 +63,55 @@ latest_balances AS (
   WHERE t.deleted_at IS NULL
     AND t.after_balance IS NOT NULL
     AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
   ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
 ),
-agent_ctx AS (
-  SELECT DISTINCT ON (au.mobile)
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
     au.mobile,
     u.status AS user_status,
     COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
   FROM agent_users au
   LEFT JOIN users u ON u.id = au.user_id
-  WHERE au.deleted_at IS NULL
-    AND au.mobile IS NOT NULL
-  ORDER BY au.mobile, au.id DESC
-),
-all_profiles AS (
-  SELECT 'agent'::text AS profile_type, au.mobile, u.status AS user_status
-  FROM agent_users au
-  LEFT JOIN users u ON u.id = au.user_id
   WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
   UNION ALL
-  SELECT 'customer', cu.mobile, u.status
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
   FROM customer_users cu
   LEFT JOIN users u ON u.id = cu.user_id
   WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'merchant', mu.mobile, u.status
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
   FROM merchant_users mu
   LEFT JOIN users u ON u.id = mu.user_id
   WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'enterprise', eu.mobile, u.status
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
   FROM enterprise_users eu
   LEFT JOIN users u ON u.id = eu.user_id
   WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'vendor', vu.mobile, u.status
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
   FROM vendor_users vu
   LEFT JOIN users u ON u.id = vu.user_id
   WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'operational', ou.mobile, u.status
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
   FROM operational_users ou
   LEFT JOIN users u ON u.id = ou.user_id
   WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
 ),
-profile_ctx AS (
+user_ctx AS (
   SELECT DISTINCT ON (mobile)
     mobile,
-    user_status
+    hierarchy_id
   FROM all_profiles
-  ORDER BY mobile, profile_type
-)
+  ORDER BY mobile, ${PROFILE_DEDUPE_ORDER}
+),
+${CUSTOMER_HIERARCHY_CTES}
 SELECT
+  :dateTo AS as_at_date,
   COALESCE(h.name, 'Unassigned') AS hierarchy_name,
-  COALESCE(pr.user_status, a.user_status, 'No user record') AS user_status,
   e.name AS entity_name,
   p.name AS pouch_name,
   l.pouch_id,
@@ -94,11 +121,16 @@ SELECT
 FROM latest_balances l
 INNER JOIN entities_d e ON e.id = l.entity_id
 INNER JOIN pouches_d p ON p.id = l.pouch_id
-LEFT JOIN agent_ctx a ON a.mobile = l.user_identifier
-LEFT JOIN profile_ctx pr ON pr.mobile = l.user_identifier
-LEFT JOIN hierarchies_d h ON h.id = a.hierarchy_id
-GROUP BY h.name, COALESCE(pr.user_status, a.user_status, 'No user record'), e.name, p.name, l.pouch_id
-ORDER BY total_balance DESC NULLS LAST
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
+LEFT JOIN user_ctx u ON u.mobile = l.user_identifier
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE u.hierarchy_id END
+GROUP BY h.name, e.name, p.name, l.pouch_id
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  p.name
 `
 
 const USER_BALANCE_DETAIL = `
@@ -133,45 +165,39 @@ latest_balances AS (
     AND t.user_identifier IS NOT NULL
   ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
 ),
-agent_ctx AS (
-  SELECT DISTINCT ON (au.mobile)
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
     au.mobile,
     au.user_id,
+    au.entity_id AS profile_entity_id,
     u.status AS user_status,
     COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
   FROM agent_users au
   LEFT JOIN users u ON u.id = au.user_id
-  WHERE au.deleted_at IS NULL
-    AND au.mobile IS NOT NULL
-  ORDER BY au.mobile, au.id DESC
-),
-all_profiles AS (
-  SELECT 'agent'::text AS profile_type, au.mobile, au.user_id, u.status AS user_status
-  FROM agent_users au
-  LEFT JOIN users u ON u.id = au.user_id
   WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
   UNION ALL
-  SELECT 'customer', cu.mobile, cu.user_id, u.status
+  SELECT 'customer', cu.mobile, cu.user_id, cu.entity_id, u.status, u.business_hierarchy_id
   FROM customer_users cu
   LEFT JOIN users u ON u.id = cu.user_id
   WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'merchant', mu.mobile, mu.user_id, u.status
+  SELECT 'merchant', mu.mobile, mu.user_id, mu.entity_id, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
   FROM merchant_users mu
   LEFT JOIN users u ON u.id = mu.user_id
   WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'enterprise', eu.mobile, eu.user_id, u.status
+  SELECT 'enterprise', eu.mobile, eu.user_id, eu.entity_id, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
   FROM enterprise_users eu
   LEFT JOIN users u ON u.id = eu.user_id
   WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'vendor', vu.mobile, vu.user_id, u.status
+  SELECT 'vendor', vu.mobile, vu.user_id, NULL::bigint, u.status, u.business_hierarchy_id
   FROM vendor_users vu
   LEFT JOIN users u ON u.id = vu.user_id
   WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
   UNION ALL
-  SELECT 'operational', ou.mobile, ou.user_id, u.status
+  SELECT 'operational', ou.mobile, ou.user_id, NULL::bigint, u.status, u.business_hierarchy_id
   FROM operational_users ou
   LEFT JOIN users u ON u.id = ou.user_id
   WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
@@ -181,27 +207,36 @@ profile_ctx AS (
     profile_type,
     mobile,
     user_id,
-    user_status
+    profile_entity_id,
+    user_status,
+    hierarchy_id
   FROM all_profiles
-  ORDER BY mobile, profile_type
-)
+  ORDER BY mobile, ${PROFILE_DEDUPE_ORDER}
+),
+${CUSTOMER_HIERARCHY_CTES}
 SELECT
   COALESCE(h.name, 'Unassigned') AS hierarchy_name,
   e.name AS entity_name,
   p.name AS pouch_name,
   l.user_identifier AS mobile,
-  COALESCE(a.user_id, pr.user_id) AS user_id,
-  COALESCE(pr.profile_type, 'unknown') AS profile_type,
-  COALESCE(pr.user_status, a.user_status, 'No user record') AS user_status,
+  pr.user_id,
+  CASE WHEN l.entity_id = ce.id THEN 'customer' ELSE COALESCE(pr.profile_type, 'unknown') END AS profile_type,
+  COALESCE(pr.user_status, 'No user record') AS user_status,
   l.latest_balance,
   l.balance_as_of
 FROM latest_balances l
 INNER JOIN entities_d e ON e.id = l.entity_id
 INNER JOIN pouches_d p ON p.id = l.pouch_id
-LEFT JOIN agent_ctx a ON a.mobile = l.user_identifier
-LEFT JOIN hierarchies_d h ON h.id = a.hierarchy_id
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
 LEFT JOIN profile_ctx pr ON pr.mobile = l.user_identifier
-ORDER BY l.latest_balance DESC NULLS LAST
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE pr.hierarchy_id END
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  l.user_identifier,
+  p.name
 `
 
 const NON_TX_SUMMARY = `
@@ -307,10 +342,9 @@ deduped AS (
     mobile,
     user_id,
     entity_id,
-    user_status,
     hierarchy_id
   FROM all_profiles
-  ORDER BY mobile, profile_type
+  ORDER BY mobile, ${PROFILE_DEDUPE_ORDER}
 ),
 non_transacting AS (
   SELECT d.*
@@ -320,15 +354,18 @@ non_transacting AS (
 )
 SELECT
   n.profile_type,
-  COALESCE(n.user_status, 'No user record') AS user_status,
   COALESCE(h.name, 'Unassigned') AS hierarchy_name,
   COALESCE(e.name, '(No entity on profile)') AS entity_name,
   COUNT(*) AS non_transacting_count
 FROM non_transacting n
 LEFT JOIN entities_d e ON e.id = n.entity_id
 LEFT JOIN hierarchies_d h ON h.id = n.hierarchy_id
-GROUP BY n.profile_type, n.user_status, h.name, e.name
-ORDER BY non_transacting_count DESC, n.profile_type, user_status, hierarchy_name, entity_name
+GROUP BY n.profile_type, h.name, e.name
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  COALESCE(e.name, '(No entity on profile)'),
+  n.profile_type
 `
 
 const NON_TX_DETAIL = `
@@ -456,7 +493,7 @@ deduped AS (
     user_status,
     hierarchy_id
   FROM all_profiles
-  ORDER BY mobile, profile_type
+  ORDER BY mobile, ${PROFILE_DEDUPE_ORDER}
 ),
 non_transacting AS (
   SELECT d.*
@@ -485,7 +522,12 @@ LEFT JOIN latest_balances lb
   AND lb.pouch_id = p.id
   AND (n.entity_id IS NULL OR lb.entity_id = n.entity_id)
 LEFT JOIN entities_d be ON be.id = lb.entity_id
-ORDER BY n.profile_type, user_status, hierarchy_name, entity_name, n.mobile, p.id
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  COALESCE(pe.name, '(No entity on profile)'),
+  n.mobile,
+  p.id
 `
 
 function stripOptionalBlocks(sql: string): string {
@@ -505,7 +547,13 @@ async function run() {
 
   for (const [name, sql] of reports) {
     const t0 = Date.now()
-    const cleaned = stripOptionalBlocks(sql)
+    let cleaned = stripOptionalBlocks(sql)
+    if (name === 'Entity Balance Summary') {
+      cleaned = applySqlFilters(cleaned, {
+        dateFrom: '2026-05-01',
+        dateTo: '2026-05-31',
+      })
+    }
     const result = await executeDataSourceQuery(ds.id, cleaned)
     console.log(`\n=== ${name} (${Date.now() - t0}ms, ${result.rows.length} rows) ===`)
     console.log(JSON.stringify(result.rows.slice(0, 3), null, 2))
@@ -515,13 +563,14 @@ async function run() {
         0,
       )
       console.log('sum user_count across groups:', totalUsers)
+      console.log('has user_status column:', 'user_status' in (result.rows[0] ?? {}))
     }
-    if (name === 'Non-Transacting Detail') {
-      const users = new Set(result.rows.map((r) => String(r.mobile)))
-      const pouches = new Set(result.rows.map((r) => String(r.pouch_name)))
-      console.log('distinct users:', users.size)
-      console.log('pouches seen:', [...pouches].sort().join(', '))
-      console.log('sample rows per user:', result.rows.slice(0, 8))
+    if (name === 'Non-Transacting Summary') {
+      console.log('has user_status column:', 'user_status' in (result.rows[0] ?? {}))
+    }
+    if (name === 'User Balance Detail') {
+      const sample = result.rows.find((r) => String(r.mobile) === '2015645')
+      if (sample) console.log('multi-profile mobile 2015645:', sample)
     }
   }
 

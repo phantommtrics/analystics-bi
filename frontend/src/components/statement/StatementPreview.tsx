@@ -1,12 +1,14 @@
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import type {
   BankStatementConfig,
+  CustomStatementConfig,
   FinancialPlConfig,
   LedgerBalanceConfig,
   StatementConfig,
   StatementType,
 } from '../../lib/statementConfig'
 import { BankStatementRenderer } from './BankStatementRenderer'
+import { CustomStatementRenderer } from './CustomStatementRenderer'
 import { FinancialPlRenderer } from './FinancialPlRenderer'
 import { LedgerBalanceRenderer } from './LedgerBalanceRenderer'
 
@@ -69,6 +71,19 @@ export function StatementPreview({
         <LedgerBalanceRenderer
           config={config as LedgerBalanceConfig}
           data={data}
+          title={title}
+          subtitle={subtitle}
+          loading={loading}
+          error={error}
+          {...exportProps}
+        />
+      )
+    case 'CUSTOM':
+      return (
+        <CustomStatementRenderer
+          config={config as CustomStatementConfig}
+          data={data}
+          headerData={headerData}
           title={title}
           subtitle={subtitle}
           loading={loading}

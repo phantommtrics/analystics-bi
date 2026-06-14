@@ -25,7 +25,7 @@ import {
   userCanViewStatement,
 } from '../statements/permissions.js'
 import { paramId } from '../utils/params.js'
-import { organizationWhere, requireOrganizationId } from '../organization/scope.js'
+import { organizationWhere, resolveOrganizationId } from '../organization/scope.js'
 
 export const statementsRouter = Router()
 
@@ -120,7 +120,7 @@ statementsRouter.get('/', viewStatements, async (req, res) => {
     search,
     parsedCategory,
     parsedType,
-    organizationWhere(req).organizationId,
+    (await organizationWhere(req)).organizationId,
   )
   return res.json(statements)
 })
@@ -266,7 +266,7 @@ statementsRouter.post('/', editStatements, async (req, res) => {
     return res.status(400).json(validationErrorBody(parsed.error))
   }
 
-  const organizationId = requireOrganizationId(req)
+  const organizationId = await resolveOrganizationId(req)
   if (!organizationId) {
     return res.status(400).json({ message: 'Organization context required' })
   }

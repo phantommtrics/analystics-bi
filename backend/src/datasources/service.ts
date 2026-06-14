@@ -1,5 +1,6 @@
 import type { DataSource, SslMode } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import { log, truncateSql } from '../utils/logger.js'
 import { decrypt, encrypt } from './crypto.js'
 import {
   destroyPool,
@@ -179,7 +180,16 @@ export async function executeDataSourceQuery(
     throw new Error('INACTIVE')
   }
   const config = getConnectionConfig(record)
-  return executeReadOnlyQuery(record.id, config, sql)
+  log(
+    'query',
+    `Executing datasource="${record.name}" db=${record.database} sql=${truncateSql(sql)}`,
+  )
+  const result = await executeReadOnlyQuery(record.id, config, sql)
+  log(
+    'query',
+    `Completed datasource="${record.name}" rows=${result.rowCount} latency=${result.latencyMs}ms${result.truncated ? ' (truncated)' : ''}`,
+  )
+  return result
 }
 
 async function requireActiveDataSource(dataSourceId: string) {

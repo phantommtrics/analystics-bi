@@ -6,7 +6,7 @@ import { DataTable } from '../../components/ui/DataTable'
 import { ExpandableCard } from '../../components/ui/ExpandableCard'
 import { LoadingButton } from '../../components/ui/LoadingButton'
 import { SearchableSelect } from '../../components/ui/SearchableSelect'
-import { adminApi, type GroupSummary, type RoleSummary } from '../../api/admin'
+import { adminApi, type GroupSummary, type OrganizationSummary, type RoleSummary } from '../../api/admin'
 import { useAuth } from '../../auth/AuthContext'
 
 type PendingAction =
@@ -16,8 +16,9 @@ type PendingAction =
   | null
 
 export function UserGroups() {
-  const { accessToken, refreshUser } = useAuth()
+  const { accessToken, refreshUser, user } = useAuth()
   const [groups, setGroups] = useState<GroupSummary[]>([])
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
   const [roles, setRoles] = useState<RoleSummary[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
@@ -31,6 +32,11 @@ export function UserGroups() {
   const [formName, setFormName] = useState('')
   const [formDescription, setFormDescription] = useState('')
   const [formRoleId, setFormRoleId] = useState<string | null>(null)
+  const [formOrganizationId, setFormOrganizationId] = useState('')
+
+  const isOwner = user?.userType === 'OWNER'
+  const defaultOrgId =
+    organizations.find((o) => o.isDefault)?.id ?? organizations[0]?.id ?? ''
 
   const roleDirty =
     selectedGroupId !== null &&
@@ -49,13 +55,17 @@ export function UserGroups() {
 
   const loadData = useCallback(async () => {
     if (!accessToken) return
-    const [groupList, roleList] = await Promise.all([
-      adminApi.listGroups(accessToken),
-      adminApi.listRoles(accessToken),
-    ])
+    const orgList = isOwner ? await adminApi.listOrganizations(accessToken) : []
+    const groupList = await adminApi.listGroups(accessToken)
+    const roleList = await adminApi.listRoles(accessToken)
+    setOrganizations(orgList)
     setGroups(groupList)
     setRoles(roleList)
-  }, [accessToken])
+    if (!formOrganizationId) {
+      const orgId = orgList.find((o) => o.isDefault)?.id ?? orgList[0]?.id ?? ''
+      if (orgId) setFormOrganizationId(orgId)
+    }
+  }, [accessToken, formOrganizationId, isOwner])
 
   useEffect(() => {
     if (!accessToken) return
@@ -89,6 +99,7 @@ export function UserGroups() {
         name: formName.trim(),
         description: formDescription.trim() || undefined,
         roleId: formRoleId,
+        organizationId: formOrganizationId || defaultOrgId || undefined,
       })
       setSuccess(`Group "${created.name}" created`)
       await loadData()
@@ -173,6 +184,23 @@ export function UserGroups() {
               Each group maps to exactly one role set. Operators inherit permissions from their assigned groups.
             </p>
             <div className="grid gap-4 md:grid-cols-2">
+              {isOwner && organizations.length > 0 && (
+                <div className="md:col-span-2">
+                  <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                  <select
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2 text-sm"
+                    value={formOrganizationId || defaultOrgId}
+                    onChange={(e) => setFormOrganizationId(e.target.value)}
+                  >
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                        {org.isDefault ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Group name</label>
                 <input

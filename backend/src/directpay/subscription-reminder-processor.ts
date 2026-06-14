@@ -1,6 +1,7 @@
 import { env } from '../env.js'
 import { sendSubscriptionReminderEmail } from '../mail/subscriptionReminder.js'
 import { prisma } from '../prisma.js'
+import { log, logError } from '../utils/logger.js'
 import { getDirectPayPartnerConfig } from './client.js'
 import {
   daysUntilPeriodEnd,
@@ -27,12 +28,14 @@ export function startSubscriptionReminderProcessor() {
 
   if (env.SUBSCRIPTION_REMINDER_TEST_MODE) {
     const delayMin = Math.round(env.SUBSCRIPTION_REMINDER_TEST_DELAY_MS / 60_000)
-    console.log(
-      `[subscription-reminder] Test mode: first send ~${delayMin} min after boot, then every ${delayMin} min`,
+    log(
+      'subscription-reminder',
+      `Test mode: first send ~${delayMin} min after boot, then every ${delayMin} min`,
     )
   } else {
-    console.log(
-      `[subscription-reminder] Processor started (daily 00:00 ${env.SUBSCRIPTION_REMINDER_TIMEZONE}, poll every ${pollMs / 1000}s)`,
+    log(
+      'subscription-reminder',
+      `Processor started (daily 00:00 ${env.SUBSCRIPTION_REMINDER_TIMEZONE}, poll every ${pollMs / 1000}s)`,
     )
   }
 }
@@ -77,11 +80,11 @@ export async function processSubscriptionReminders() {
       try {
         await maybeSendReminderForOrg(org, now)
       } catch (err) {
-        console.error(`[subscription-reminder] Failed for org ${org.id}:`, err)
+        logError('subscription-reminder', `Failed for org ${org.id}:`, err)
       }
     }
   } catch (err) {
-    console.error('[subscription-reminder] Processor error:', err)
+    logError('subscription-reminder', 'Processor error:', err)
   } finally {
     processing = false
   }
@@ -166,7 +169,7 @@ async function maybeSendReminderForOrg(
   })
 
   if (!result.ok) {
-    console.error(`[subscription-reminder] Email failed for ${fresh.id}:`, result.message)
+    logError('subscription-reminder', `Email failed for ${fresh.id}:`, result.message)
     return
   }
 
@@ -175,7 +178,8 @@ async function maybeSendReminderForOrg(
     data: { subscriptionReminderLastSentAt: now },
   })
 
-  console.log(
-    `[subscription-reminder] Sent to ${fresh.billingOwnerEmail} (${result.channel}) org=${fresh.name}`,
+  log(
+    'subscription-reminder',
+    `Sent to ${fresh.billingOwnerEmail} (${result.channel}) org=${fresh.name}`,
   )
 }

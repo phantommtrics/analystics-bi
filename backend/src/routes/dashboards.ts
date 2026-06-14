@@ -21,7 +21,7 @@ import {
   userCanViewDashboard,
 } from '../dashboards/permissions.js'
 import { paramId } from '../utils/params.js'
-import { organizationWhere, requireOrganizationId } from '../organization/scope.js'
+import { organizationWhere, resolveOrganizationId } from '../organization/scope.js'
 
 export const dashboardsRouter = Router()
 
@@ -54,7 +54,7 @@ dashboardsRouter.get('/', async (req, res) => {
   const accessibleOnly = req.query.accessibleOnly === 'true'
   const sidebarMenuOnly = req.query.sidebarMenuOnly === 'true'
   const permissions = req.authUser?.permissions ?? []
-  const orgFilter = organizationWhere(req)
+  const orgFilter = await organizationWhere(req)
   const organizationId = orgFilter.organizationId
 
   if (accessibleOnly) {
@@ -166,7 +166,7 @@ dashboardsRouter.post('/', editDashboards, async (req, res) => {
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const organizationId = requireOrganizationId(req)
+  const organizationId = await resolveOrganizationId(req)
   if (!organizationId) {
     return res.status(400).json({ message: 'Organization context required' })
   }

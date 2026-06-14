@@ -12,11 +12,13 @@ import { schedulesRouter } from './routes/schedules.js'
 import { auditLogsRouter } from './routes/audit-logs.js'
 import { directPayWebhooksRouter } from './routes/webhooks/directpay.js'
 import { auditLogMiddleware } from './middleware/auditLog.js'
+import { requestLogMiddleware } from './middleware/requestLog.js'
 import { authenticate } from './middleware/authenticate.js'
 import { requireActiveSubscription } from './middleware/requireActiveSubscription.js'
 import { startReportScheduleProcessor } from './schedules/processor.js'
 import { startStatementScheduleProcessor } from './schedules/statementProcessor.js'
 import { startSubscriptionReminderProcessor } from './directpay/subscription-reminder-processor.js'
+import { log } from './utils/logger.js'
 
 const app = express()
 
@@ -31,6 +33,7 @@ app.use(
 app.use('/api/webhooks', directPayWebhooksRouter)
 
 app.use(express.json())
+app.use(requestLogMiddleware)
 app.use(auditLogMiddleware)
 
 app.get('/api/health', (_req, res) => {
@@ -54,7 +57,7 @@ subscriptionProtected.use('/', protectedRouter)
 app.use('/api', subscriptionProtected)
 
 app.listen(env.PORT, () => {
-  console.log(`API listening on http://localhost:${env.PORT}`)
+  log('server', `API listening on http://localhost:${env.PORT}`)
   startReportScheduleProcessor()
   startStatementScheduleProcessor()
   startSubscriptionReminderProcessor()

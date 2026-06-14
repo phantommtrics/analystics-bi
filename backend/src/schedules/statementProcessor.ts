@@ -2,6 +2,7 @@ import { ReportScheduleRecurrence, ReportScheduleStatus } from '@prisma/client'
 import { recordAuditEvent } from '../audit/service.js'
 import { env } from '../env.js'
 import { sendStatementScheduleEmail } from '../mail/statementSchedule.js'
+import { log, logError } from '../utils/logger.js'
 import { prisma } from '../prisma.js'
 import { isRecurring } from './recurrence.js'
 import { runScheduledStatement } from './runStatement.js'
@@ -20,7 +21,7 @@ export function startStatementScheduleProcessor() {
   }, pollMs)
   const pollLabel =
     pollMs % 1000 === 0 ? `${pollMs / 1000}s` : `${pollMs}ms`
-  console.log(`[statement-schedule] Processor started (poll every ${pollLabel})`)
+  log('statement-schedule', `Processor started (poll every ${pollLabel})`)
 }
 
 export function stopStatementScheduleProcessor() {
@@ -53,11 +54,15 @@ export async function processDueStatementSchedules() {
       },
     })
 
+    if (due.length > 0) {
+      log('statement-schedule', `Processing ${due.length} due schedule(s)`)
+    }
+
     for (const schedule of due) {
       await deliverStatementSchedule(schedule)
     }
   } catch (err) {
-    console.error('[statement-schedule] Processor error:', err)
+    logError('statement-schedule', 'Processor error:', err)
   } finally {
     processing = false
   }
@@ -80,6 +85,7 @@ async function deliverStatementSchedule(schedule: {
   group: { id: string; name: string }
 }) {
   if (schedule.statement.deletedAt || !schedule.statement.isPublished) {
+    log('statement-schedule', `Skipped schedule=${schedule.id} statement="${schedule.statement.name}" (unpublished or deleted)`)
     await prisma.statementSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -92,6 +98,7 @@ async function deliverStatementSchedule(schedule: {
 
   const recipients = await getGroupRecipientEmails(schedule.group.id)
   if (recipients.length === 0) {
+    log('statement-schedule', `Failed schedule=${schedule.id} statement="${schedule.statement.name}" (no recipients)`)
     await prisma.statementSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -101,6 +108,11 @@ async function deliverStatementSchedule(schedule: {
     })
     return
   }
+
+  log(
+    'statement-schedule',
+    `Delivering schedule=${schedule.id} statement="${schedule.statement.name}" group="${schedule.group.name}" recipients=${recipients.length}`,
+  )
 
   let attachments: { filename: string; content: Buffer }[]
   let filterLabel: string
@@ -120,6 +132,7 @@ async function deliverStatementSchedule(schedule: {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Failed to generate statement exports'
+    logError('statement-schedule', `Failed schedule=${schedule.id} statement="${schedule.statement.name}": ${message}`)
     await prisma.statementSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -152,6 +165,7 @@ async function deliverStatementSchedule(schedule: {
   }
 
   if (sentCount === 0) {
+    logError('statement-schedule', `Failed schedule=${schedule.id} statement="${schedule.statement.name}" (email delivery failed)`)
     await prisma.statementSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -179,6 +193,10 @@ async function deliverStatementSchedule(schedule: {
 
   if (isRecurring(schedule.recurrence)) {
     const nextRun = statementScheduleNextRunAfterDelivery(schedule)
+    log(
+      'statement-schedule',
+      `Completed schedule=${schedule.id} statement="${schedule.statement.name}" sent=${sentCount}/${recipients.length} nextRun=${nextRun.toISOString()}`,
+    )
     await prisma.statementSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -190,6 +208,11 @@ async function deliverStatementSchedule(schedule: {
     })
     return
   }
+
+  log(
+    'statement-schedule',
+    `Completed schedule=${schedule.id} statement="${schedule.statement.name}" sent=${sentCount}/${recipients.length} (one-time)`,
+  )
 
   await prisma.statementSchedule.update({
     where: { id: schedule.id },

@@ -2,6 +2,7 @@ import { getSavedReportById } from '../reports/service.js'
 import { parseStatementConfig } from '../statements/config.js'
 import { buildStatementExportAttachments } from '../statements/exportService.js'
 import { getStatementById } from '../statements/service.js'
+import { log } from '../utils/logger.js'
 import type { ReportFileAttachment } from '../reports/exportFiles.js'
 import {
   buildScheduleExecuteFilters,
@@ -36,6 +37,7 @@ export async function runScheduledStatement(
   const filters = buildScheduleExecuteFilters(report.sql, ctx)
   const range = scheduleDateRange(ctx)
   const filterLabel = formatScheduleFilterLabel(range)
+  log('statement-schedule', `Running scheduled statement="${statement.name}" id=${statementId}`)
   const attachments = await buildStatementExportAttachments(
     statementId,
     filters,

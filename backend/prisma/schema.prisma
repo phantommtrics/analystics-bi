@@ -85,6 +85,7 @@ model Organization {
   slug                    String             @unique
   industry                String?
   status                  OrganizationStatus @default(ACTIVE)
+  isDefault               Boolean            @default(false)
   billingOwnerEmail       String?
   billingOwnerName        String?
   directPayBusinessId     String?            @unique

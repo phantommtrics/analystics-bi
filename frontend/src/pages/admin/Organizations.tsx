@@ -27,6 +27,24 @@ function statusVariant(status: string | null): 'green' | 'amber' | 'red' | 'gray
   return 'gray'
 }
 
+type OrgFormState = {
+  name: string
+  slug: string
+  industry: string
+  billingOwnerEmail: string
+  billingOwnerName: string
+  isDefault: boolean
+}
+
+const emptyForm = (): OrgFormState => ({
+  name: '',
+  slug: '',
+  industry: '',
+  billingOwnerEmail: '',
+  billingOwnerName: '',
+  isDefault: false,
+})
+
 export function Organizations() {
   const { accessToken, user, refreshUser } = useAuth()
   const [orgs, setOrgs] = useState<OrganizationSummary[]>([])
@@ -34,26 +52,20 @@ export function Organizations() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({
-    name: '',
-    slug: '',
-    industry: '',
-    billingOwnerEmail: '',
-    billingOwnerName: '',
-  })
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [editingOrgId, setEditingOrgId] = useState<string | null>(null)
+  const [createForm, setCreateForm] = useState<OrgFormState>(emptyForm())
+  const [editForm, setEditForm] = useState<OrgFormState>(emptyForm())
 
   if (user?.userType !== 'OWNER') {
     return <Navigate to="/" replace />
   }
 
-  const hasOrg = orgs.length >= 1
-
   const loadData = useCallback(async () => {
     if (!accessToken) return
     const list = await adminApi.listOrganizations(accessToken)
     setOrgs(list)
-    setShowForm(list.length === 0)
+    if (list.length === 0) setShowCreateForm(true)
   }, [accessToken])
 
   useEffect(() => {
@@ -65,35 +77,75 @@ export function Organizations() {
   }, [accessToken, loadData])
 
   useEffect(() => {
-    if (user?.email && !form.billingOwnerEmail) {
-      setForm((f) => ({
+    if (user?.email && !createForm.billingOwnerEmail) {
+      setCreateForm((f) => ({
         ...f,
         billingOwnerEmail: user.email,
         billingOwnerName: f.billingOwnerName || user.displayName || user.username,
       }))
     }
-  }, [user, form.billingOwnerEmail])
+  }, [user, createForm.billingOwnerEmail])
+
+  function startEdit(org: OrganizationSummary) {
+    setEditingOrgId(org.id)
+    setEditForm({
+      name: org.name,
+      slug: org.slug,
+      industry: org.industry ?? '',
+      billingOwnerEmail: org.billingOwnerEmail ?? '',
+      billingOwnerName: org.billingOwnerName ?? '',
+      isDefault: org.isDefault,
+    })
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!accessToken || hasOrg) return
+    if (!accessToken) return
     setActionLoading(true)
     setError('')
     setSuccess('')
     try {
       await adminApi.createOrganization(accessToken, {
-        name: form.name,
-        slug: form.slug || undefined,
-        industry: form.industry || undefined,
-        billingOwnerEmail: form.billingOwnerEmail,
-        billingOwnerName: form.billingOwnerName,
+        name: createForm.name,
+        slug: createForm.slug || undefined,
+        industry: createForm.industry || undefined,
+        billingOwnerEmail: createForm.billingOwnerEmail,
+        billingOwnerName: createForm.billingOwnerName,
+        isDefault: createForm.isDefault || orgs.length === 0,
       })
       setSuccess('Organization created')
-      setShowForm(false)
+      setShowCreateForm(false)
+      setCreateForm(emptyForm())
       await refreshUser()
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create failed')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !editingOrgId) return
+    setActionLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      await adminApi.updateOrganization(accessToken, editingOrgId, {
+        name: editForm.name,
+        slug: editForm.slug || undefined,
+        industry: editForm.industry || null,
+        billingOwnerEmail: editForm.billingOwnerEmail,
+        billingOwnerName: editForm.billingOwnerName,
+        isDefault: editForm.isDefault || undefined,
+      })
+      setSuccess('Organization updated')
+      setEditingOrgId(null)
+      await refreshUser()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Update failed')
     } finally {
       setActionLoading(false)
     }
@@ -121,13 +173,8 @@ export function Organizations() {
     setError('')
     setSuccess('')
     try {
-      const result = await adminApi.startDirectPaySubscription(accessToken, org.id)
+      await adminApi.startDirectPaySubscription(accessToken, org.id)
       setSuccess(`Corporate plan subscription started for ${org.name}`)
-      if (result.subscription.payUrl) {
-        setSuccess(
-          `${result.subscription.payUrl ? 'Subscription started. Use Pay in DirectPay when ready.' : 'Subscription started.'}`,
-        )
-      }
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Start subscription failed')
@@ -153,7 +200,14 @@ export function Organizations() {
 
   return (
     <div className="flex h-full flex-col">
-      <TopBar title="Organization" />
+      <TopBar
+        title="Organizations"
+        primaryAction={{
+          label: 'New organization',
+          onClick: () => setShowCreateForm(true),
+          icon: 'ti-building-plus',
+        }}
+      />
       <div className="flex-1 overflow-auto p-6">
         {error && (
           <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
@@ -166,15 +220,14 @@ export function Organizations() {
           </div>
         )}
 
-        {!hasOrg && !loading && (
+        {orgs.length === 0 && !loading && (
           <p className="mb-4 text-sm text-text-secondary">
-            Create your organization once, then provision DirectPay and start the Corporate
-            subscription. Subscription payment is completed in DirectPay (see Pay button after
-            starting subscription).
+            Create your default organization to get started. You can add more organizations later
+            and choose which one is the default fallback for owner operations.
           </p>
         )}
 
-        {!hasOrg && showForm && (
+        {showCreateForm && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Create organization</CardTitle>
@@ -185,22 +238,22 @@ export function Organizations() {
                   <FieldLabel>Name</FieldLabel>
                   <FieldInput
                     required
-                    value={form.name}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    value={createForm.name}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
                   />
                 </div>
                 <div>
                   <FieldLabel>Slug (optional)</FieldLabel>
                   <FieldInput
-                    value={form.slug}
-                    onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value }))}
+                    value={createForm.slug}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, slug: e.target.value }))}
                   />
                 </div>
                 <div>
                   <FieldLabel>Industry</FieldLabel>
                   <FieldInput
-                    value={form.industry}
-                    onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}
+                    value={createForm.industry}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, industry: e.target.value }))}
                   />
                 </div>
                 <div>
@@ -208,107 +261,231 @@ export function Organizations() {
                   <FieldInput
                     required
                     type="email"
-                    value={form.billingOwnerEmail}
-                    onChange={(e) => setForm((f) => ({ ...f, billingOwnerEmail: e.target.value }))}
+                    value={createForm.billingOwnerEmail}
+                    onChange={(e) =>
+                      setCreateForm((f) => ({ ...f, billingOwnerEmail: e.target.value }))
+                    }
                   />
-                  <p className="mt-1 text-xs text-text-secondary">
-                    Used for DirectPay login and subscription invoices. Use your email to pay as
-                    the billing owner.
-                  </p>
                 </div>
                 <div className="md:col-span-2">
                   <FieldLabel>Billing owner name</FieldLabel>
                   <FieldInput
                     required
-                    value={form.billingOwnerName}
-                    onChange={(e) => setForm((f) => ({ ...f, billingOwnerName: e.target.value }))}
+                    value={createForm.billingOwnerName}
+                    onChange={(e) =>
+                      setCreateForm((f) => ({ ...f, billingOwnerName: e.target.value }))
+                    }
                   />
                 </div>
+                {orgs.length > 0 && (
+                  <div className="md:col-span-2">
+                    <label className="flex items-center gap-2 text-sm text-text-primary">
+                      <input
+                        type="checkbox"
+                        checked={createForm.isDefault}
+                        onChange={(e) =>
+                          setCreateForm((f) => ({ ...f, isDefault: e.target.checked }))
+                        }
+                      />
+                      Set as default organization
+                    </label>
+                  </div>
+                )}
               </div>
-              <LoadingButton type="submit" loading={actionLoading}>
-                Create organization
-              </LoadingButton>
+              <div className="flex gap-2">
+                <LoadingButton type="submit" loading={actionLoading}>
+                  Create organization
+                </LoadingButton>
+                {orgs.length > 0 && (
+                  <LoadingButton
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setShowCreateForm(false)}
+                  >
+                    Cancel
+                  </LoadingButton>
+                )}
+              </div>
             </form>
           </Card>
         )}
 
         <Card>
           <CardHeader>
-            <CardTitle>{hasOrg ? 'Your organization' : 'Organization'}</CardTitle>
+            <CardTitle>All organizations</CardTitle>
           </CardHeader>
           {loading ? (
             <p className="p-4 text-sm text-text-secondary">Loading…</p>
           ) : orgs.length === 0 ? (
             <p className="p-4 text-sm text-text-secondary">
-              No organization yet. Create one above to get started.
+              No organizations yet. Create one above to get started.
             </p>
           ) : (
             <div className="divide-y divide-border">
               {orgs.map((org) => (
-                <div key={org.id} className="flex flex-wrap items-center gap-3 p-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium text-text-primary">{org.name}</p>
-                    <p className="text-xs text-text-secondary">
-                      {org.slug}
-                      {org.directPayBusinessId ? ` · DirectPay ${org.directPayBusinessId}` : ''}
-                    </p>
-                    <p className="mt-1 text-xs text-text-secondary">
-                      Billing: {org.billingOwnerEmail ?? '—'}
-                    </p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <Badge variant={statusVariant(org.subscription.status)}>
-                        {org.subscription.status ?? 'Not started'}
-                      </Badge>
-                      {org.subscription.planCode && (
-                        <span className="text-xs text-text-secondary">{org.subscription.planCode}</span>
-                      )}
-                      {org.subscription.periodEnd && (
-                        <span className="text-xs text-text-secondary">
-                          until {new Date(org.subscription.periodEnd).toLocaleDateString()}
-                        </span>
-                      )}
+                <div key={org.id} className="p-4">
+                  {editingOrgId === org.id ? (
+                    <form onSubmit={handleUpdate} className="space-y-4">
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <FieldLabel>Name</FieldLabel>
+                          <FieldInput
+                            required
+                            value={editForm.name}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, name: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel>Slug</FieldLabel>
+                          <FieldInput
+                            required
+                            value={editForm.slug}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, slug: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel>Industry</FieldLabel>
+                          <FieldInput
+                            value={editForm.industry}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, industry: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div>
+                          <FieldLabel>Billing owner email</FieldLabel>
+                          <FieldInput
+                            required
+                            type="email"
+                            value={editForm.billingOwnerEmail}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, billingOwnerEmail: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <FieldLabel>Billing owner name</FieldLabel>
+                          <FieldInput
+                            required
+                            value={editForm.billingOwnerName}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, billingOwnerName: e.target.value }))
+                            }
+                          />
+                        </div>
+                        {!org.isDefault && (
+                          <div className="md:col-span-2">
+                            <label className="flex items-center gap-2 text-sm text-text-primary">
+                              <input
+                                type="checkbox"
+                                checked={editForm.isDefault}
+                                onChange={(e) =>
+                                  setEditForm((f) => ({ ...f, isDefault: e.target.checked }))
+                                }
+                              />
+                              Set as default organization
+                            </label>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <LoadingButton type="submit" loading={actionLoading}>
+                          Save changes
+                        </LoadingButton>
+                        <LoadingButton
+                          type="button"
+                          variant="secondary"
+                          onClick={() => setEditingOrgId(null)}
+                        >
+                          Cancel
+                        </LoadingButton>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium text-text-primary">{org.name}</p>
+                          {org.isDefault && <Badge variant="blue">Default</Badge>}
+                        </div>
+                        <p className="text-xs text-text-secondary">
+                          {org.slug}
+                          {org.directPayBusinessId ? ` · DirectPay ${org.directPayBusinessId}` : ''}
+                          {org.userCount > 0 ? ` · ${org.userCount} users` : ''}
+                        </p>
+                        <p className="mt-1 text-xs text-text-secondary">
+                          Billing: {org.billingOwnerEmail ?? '—'}
+                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <Badge variant={statusVariant(org.subscription.status)}>
+                            {org.subscription.status ?? 'Not started'}
+                          </Badge>
+                          {org.subscription.planCode && (
+                            <span className="text-xs text-text-secondary">
+                              {org.subscription.planCode}
+                            </span>
+                          )}
+                          {org.subscription.periodEnd && (
+                            <span className="text-xs text-text-secondary">
+                              until {new Date(org.subscription.periodEnd).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <LoadingButton
+                          type="button"
+                          variant="secondary"
+                          loading={actionLoading}
+                          onClick={() => startEdit(org)}
+                        >
+                          Edit
+                        </LoadingButton>
+                        {!org.directPayBusinessId && (
+                          <LoadingButton
+                            type="button"
+                            loading={actionLoading}
+                            onClick={() => provision(org)}
+                          >
+                            Provision DirectPay
+                          </LoadingButton>
+                        )}
+                        {org.directPayBusinessId && !org.subscription.status && (
+                          <LoadingButton
+                            type="button"
+                            loading={actionLoading}
+                            onClick={() => startSubscription(org)}
+                          >
+                            Start Corporate Plan
+                          </LoadingButton>
+                        )}
+                        {org.subscription.payUrl && (
+                          <a
+                            href={org.subscription.payUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                          >
+                            Pay in DirectPay
+                          </a>
+                        )}
+                        {org.directPayBusinessId && (
+                          <LoadingButton
+                            type="button"
+                            loading={actionLoading}
+                            variant="secondary"
+                            onClick={() => syncSubscription(org)}
+                          >
+                            Sync
+                          </LoadingButton>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {!org.directPayBusinessId && (
-                      <LoadingButton
-                        type="button"
-                        loading={actionLoading}
-                        onClick={() => provision(org)}
-                      >
-                        Provision DirectPay
-                      </LoadingButton>
-                    )}
-                    {org.directPayBusinessId && !org.subscription.status && (
-                      <LoadingButton
-                        type="button"
-                        loading={actionLoading}
-                        onClick={() => startSubscription(org)}
-                      >
-                        Start Corporate Plan
-                      </LoadingButton>
-                    )}
-                    {org.subscription.payUrl && (
-                      <a
-                        href={org.subscription.payUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-                      >
-                        Pay in DirectPay
-                      </a>
-                    )}
-                    {org.directPayBusinessId && (
-                      <LoadingButton
-                        type="button"
-                        loading={actionLoading}
-                        variant="secondary"
-                        onClick={() => syncSubscription(org)}
-                      >
-                        Sync
-                      </LoadingButton>
-                    )}
-                  </div>
+                  )}
                 </div>
               ))}
             </div>

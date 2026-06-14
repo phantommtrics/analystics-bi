@@ -2,6 +2,7 @@ import { ReportScheduleRecurrence, ReportScheduleStatus } from '@prisma/client'
 import { recordAuditEvent } from '../audit/service.js'
 import { env } from '../env.js'
 import { sendReportScheduleEmail, type ReportScheduleAttachment } from '../mail/reportSchedule.js'
+import { log, logError } from '../utils/logger.js'
 import { runScheduledReport } from './runReport.js'
 import { prisma } from '../prisma.js'
 import { isRecurring } from './recurrence.js'
@@ -19,7 +20,7 @@ export function startReportScheduleProcessor() {
   }, pollMs)
   const pollLabel =
     pollMs % 1000 === 0 ? `${pollMs / 1000}s` : `${pollMs}ms`
-  console.log(`[report-schedule] Processor started (poll every ${pollLabel})`)
+  log('report-schedule', `Processor started (poll every ${pollLabel})`)
 }
 
 export function stopReportScheduleProcessor() {
@@ -53,11 +54,15 @@ export async function processDueReportSchedules() {
       },
     })
 
+    if (due.length > 0) {
+      log('report-schedule', `Processing ${due.length} due schedule(s)`)
+    }
+
     for (const schedule of due) {
       await deliverSchedule(schedule)
     }
   } catch (err) {
-    console.error('[report-schedule] Processor error:', err)
+    logError('report-schedule', 'Processor error:', err)
   } finally {
     processing = false
   }
@@ -81,6 +86,7 @@ async function deliverSchedule(schedule: {
   group: { id: string; name: string }
 }) {
   if (schedule.report.deletedAt || !schedule.report.isPublished) {
+    log('report-schedule', `Skipped schedule=${schedule.id} report="${schedule.report.name}" (unpublished or deleted)`)
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -93,6 +99,7 @@ async function deliverSchedule(schedule: {
 
   const recipients = await getGroupRecipientEmails(schedule.group.id)
   if (recipients.length === 0) {
+    log('report-schedule', `Failed schedule=${schedule.id} report="${schedule.report.name}" (no recipients)`)
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -104,6 +111,7 @@ async function deliverSchedule(schedule: {
   }
 
   if (!schedule.report.dataSource.isActive) {
+    log('report-schedule', `Failed schedule=${schedule.id} report="${schedule.report.name}" (inactive data source)`)
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -113,6 +121,11 @@ async function deliverSchedule(schedule: {
     })
     return
   }
+
+  log(
+    'report-schedule',
+    `Delivering schedule=${schedule.id} report="${schedule.report.name}" group="${schedule.group.name}" recipients=${recipients.length}`,
+  )
 
   let attachments: ReportScheduleAttachment[]
   let filterLabel: string
@@ -132,6 +145,7 @@ async function deliverSchedule(schedule: {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : 'Failed to generate report exports'
+    logError('report-schedule', `Failed schedule=${schedule.id} report="${schedule.report.name}": ${message}`)
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -164,6 +178,7 @@ async function deliverSchedule(schedule: {
   }
 
   if (sentCount === 0) {
+    logError('report-schedule', `Failed schedule=${schedule.id} report="${schedule.report.name}" (email delivery failed)`)
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -191,6 +206,10 @@ async function deliverSchedule(schedule: {
 
   if (isRecurring(schedule.recurrence)) {
     const nextRun = scheduleNextRunAfterDelivery(schedule)
+    log(
+      'report-schedule',
+      `Completed schedule=${schedule.id} report="${schedule.report.name}" sent=${sentCount}/${recipients.length} nextRun=${nextRun.toISOString()}`,
+    )
     await prisma.reportSchedule.update({
       where: { id: schedule.id },
       data: {
@@ -202,6 +221,11 @@ async function deliverSchedule(schedule: {
     })
     return
   }
+
+  log(
+    'report-schedule',
+    `Completed schedule=${schedule.id} report="${schedule.report.name}" sent=${sentCount}/${recipients.length} (one-time)`,
+  )
 
   await prisma.reportSchedule.update({
     where: { id: schedule.id },

@@ -1,4 +1,5 @@
 import { prisma } from '../prisma.js'
+import { log } from '../utils/logger.js'
 import {
   buildGuestInvoicePayUrl,
   getDirectPaySubscription,
@@ -50,6 +51,11 @@ export async function syncOrganizationSubscription(
   const periodEnd = sub?.currentPeriodEnd ?? null
   const periodStart = sub?.currentPeriodStart ?? null
   const payUrl = buildGuestInvoicePayUrl(remote.pendingInvoice?.guestToken)
+
+  log(
+    'subscription-sync',
+    `Synced org=${organizationId} status=${status ?? 'none'} plan=${planCode ?? 'none'}`,
+  )
 
   await prisma.organization.update({
     where: { id: organizationId },

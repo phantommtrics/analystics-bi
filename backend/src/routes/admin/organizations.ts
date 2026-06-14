@@ -13,6 +13,7 @@ import {
   cachedOrganizationSubscription,
   syncOrganizationSubscription,
 } from '../../directpay/subscription-sync.js'
+import { invalidateOrganizationCache } from '../../organization/scope.js'
 import { paramId } from '../../utils/params.js'
 import { env } from '../../env.js'
 
@@ -26,6 +27,16 @@ const createOrgSchema = z.object({
   industry: z.string().max(80).optional(),
   billingOwnerEmail: z.string().email(),
   billingOwnerName: z.string().min(1).max(120),
+  isDefault: z.boolean().optional(),
+})
+
+const updateOrgSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  slug: z.string().min(1).max(80).optional(),
+  industry: z.string().max(80).optional().nullable(),
+  billingOwnerEmail: z.string().email().optional(),
+  billingOwnerName: z.string().min(1).max(120).optional(),
+  isDefault: z.boolean().optional(),
 })
 
 const startSubscriptionSchema = z.object({
@@ -47,6 +58,7 @@ function formatOrg(org: {
   slug: string
   industry: string | null
   status: OrganizationStatus
+  isDefault: boolean
   billingOwnerEmail: string | null
   billingOwnerName: string | null
   directPayBusinessId: string | null
@@ -65,6 +77,7 @@ function formatOrg(org: {
     slug: org.slug,
     industry: org.industry,
     status: org.status,
+    isDefault: org.isDefault,
     billingOwnerEmail: org.billingOwnerEmail,
     billingOwnerName: org.billingOwnerName,
     directPayBusinessId: org.directPayBusinessId,
@@ -81,10 +94,20 @@ function formatOrg(org: {
   }
 }
 
+const orgInclude = { _count: { select: { users: true } } } as const
+
+async function setDefaultOrganization(
+  orgId: string,
+  tx: Pick<typeof prisma, 'organization'> = prisma,
+) {
+  await tx.organization.updateMany({ where: { isDefault: true }, data: { isDefault: false } })
+  await tx.organization.update({ where: { id: orgId }, data: { isDefault: true } })
+}
+
 organizationsRouter.get('/', async (_req, res) => {
   const orgs = await prisma.organization.findMany({
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { users: true } } },
+    orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+    include: orgInclude,
   })
   res.json(orgs.map(formatOrg))
 })
@@ -95,20 +118,20 @@ organizationsRouter.post('/', async (req, res) => {
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const existingCount = await prisma.organization.count()
-  if (existingCount >= 1) {
-    return res.status(409).json({
-      message: 'Only one organization is allowed. Update or use the existing organization.',
-    })
-  }
-
   const slug = normalizeSlug(parsed.data.slug || parsed.data.name)
   const slugTaken = await prisma.organization.findUnique({ where: { slug } })
   if (slugTaken) {
     return res.status(409).json({ message: 'Organization slug already exists' })
   }
 
+  const orgCount = await prisma.organization.count()
+  const shouldBeDefault = parsed.data.isDefault ?? orgCount === 0
+
   const org = await prisma.$transaction(async (tx) => {
+    if (shouldBeDefault) {
+      await tx.organization.updateMany({ where: { isDefault: true }, data: { isDefault: false } })
+    }
+
     const created = await tx.organization.create({
       data: {
         name: parsed.data.name.trim(),
@@ -116,19 +139,74 @@ organizationsRouter.post('/', async (req, res) => {
         industry: parsed.data.industry?.trim() || null,
         billingOwnerEmail: parsed.data.billingOwnerEmail.trim().toLowerCase(),
         billingOwnerName: parsed.data.billingOwnerName.trim(),
+        isDefault: shouldBeDefault,
       },
-      include: { _count: { select: { users: true } } },
+      include: orgInclude,
     })
 
-    await tx.user.update({
-      where: { id: req.authUser!.id },
-      data: { organizationId: created.id },
-    })
+    if (shouldBeDefault) {
+      await tx.user.update({
+        where: { id: req.authUser!.id },
+        data: { organizationId: created.id },
+      })
+    }
 
     return created
   })
 
+  invalidateOrganizationCache()
   res.status(201).json(formatOrg(org))
+})
+
+organizationsRouter.patch('/:id', async (req, res) => {
+  const id = paramId(req)
+  const parsed = updateOrgSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({ message: 'Invalid payload' })
+  }
+
+  const existing = await prisma.organization.findUnique({ where: { id } })
+  if (!existing) {
+    return res.status(404).json({ message: 'Organization not found' })
+  }
+
+  let slug = existing.slug
+  if (parsed.data.slug) {
+    slug = normalizeSlug(parsed.data.slug)
+    if (slug !== existing.slug) {
+      const slugTaken = await prisma.organization.findUnique({ where: { slug } })
+      if (slugTaken) {
+        return res.status(409).json({ message: 'Organization slug already exists' })
+      }
+    }
+  }
+
+  const org = await prisma.$transaction(async (tx) => {
+    if (parsed.data.isDefault) {
+      await setDefaultOrganization(id, tx)
+    }
+
+    return tx.organization.update({
+      where: { id },
+      data: {
+        ...(parsed.data.name !== undefined && { name: parsed.data.name.trim() }),
+        ...(parsed.data.slug !== undefined && { slug }),
+        ...(parsed.data.industry !== undefined && {
+          industry: parsed.data.industry?.trim() || null,
+        }),
+        ...(parsed.data.billingOwnerEmail !== undefined && {
+          billingOwnerEmail: parsed.data.billingOwnerEmail.trim().toLowerCase(),
+        }),
+        ...(parsed.data.billingOwnerName !== undefined && {
+          billingOwnerName: parsed.data.billingOwnerName.trim(),
+        }),
+      },
+      include: orgInclude,
+    })
+  })
+
+  invalidateOrganizationCache()
+  res.json(formatOrg(org))
 })
 
 organizationsRouter.post('/:id/directpay/provision', async (req, res) => {

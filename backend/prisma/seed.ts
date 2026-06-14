@@ -92,6 +92,23 @@ async function main() {
   const password = process.env.OWNER_PASSWORD ?? 'ChangeMeNow123!'
   const passwordHash = await bcrypt.hash(password, 12)
 
+  let organization = await prisma.organization.findFirst({
+    where: { isDefault: true },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  if (!organization) {
+    organization = await prisma.organization.create({
+      data: {
+        name: process.env.DEFAULT_ORG_NAME ?? 'Default Organization',
+        slug: process.env.DEFAULT_ORG_SLUG ?? 'default',
+        isDefault: true,
+        billingOwnerEmail: email.toLowerCase(),
+        billingOwnerName: username,
+      },
+    })
+  }
+
   const owner = await prisma.user.upsert({
     where: { email },
     update: {
@@ -100,7 +117,7 @@ async function main() {
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
-      organizationId: null,
+      organizationId: organization.id,
     },
     create: {
       username,
@@ -109,7 +126,7 @@ async function main() {
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
-      organizationId: null,
+      organizationId: organization.id,
     },
   })
 

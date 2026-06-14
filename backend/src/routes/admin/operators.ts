@@ -8,7 +8,7 @@ import { authorize } from '../../middleware/authorize.js'
 import { sendInviteEmail } from '../../mail/invite.js'
 import { generateTemporaryPassword } from '../../utils/password.js'
 import { paramId } from '../../utils/params.js'
-import { organizationWhere, requireOrganizationId } from '../../organization/scope.js'
+import { organizationListWhere, resolveOrganizationId } from '../../organization/scope.js'
 
 export const operatorsRouter = Router()
 
@@ -18,16 +18,18 @@ const createOperatorSchema = z.object({
   username: z.string().min(2).max(50),
   email: z.string().email(),
   displayName: z.string().max(100).optional(),
-  groupIds: z.array(z.string()).default([]),
+  groupIds: z.array(z.string()).min(1, 'At least one group is required'),
+  organizationId: z.string().min(1).optional(),
 })
 
 const updateOperatorSchema = z.object({
   displayName: z.string().max(100).optional().nullable(),
-  groupIds: z.array(z.string()).optional(),
+  groupIds: z.array(z.string()).min(1, 'At least one group is required').optional(),
   status: z.enum(['ACTIVE', 'DISABLED']).optional(),
 })
 
 const operatorInclude = {
+  organization: { select: { id: true, name: true } },
   groups: {
     include: {
       group: {
@@ -48,6 +50,8 @@ type OperatorWithGroups = {
   mustChangePassword: boolean
   lastLoginAt: Date | null
   createdAt: Date
+  organizationId: string | null
+  organization: { id: string; name: string } | null
   groups: Array<{
     group: {
       id: string
@@ -75,6 +79,8 @@ function formatOperator(user: OperatorWithGroups) {
     mustChangePassword: user.mustChangePassword,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
+    organizationId: user.organizationId,
+    organizationName: user.organization?.name ?? null,
     roles: effectiveRoles(user),
     groups: user.groups.map((ug) => ({ id: ug.group.id, name: ug.group.name })),
   }
@@ -129,19 +135,45 @@ async function issueTemporaryPassword(user: {
   return delivery
 }
 
+async function assertOperatorInScope(req: Parameters<typeof resolveOrganizationId>[0], operatorId: string) {
+  const user = await prisma.user.findFirst({
+    where: { id: operatorId, userType: UserType.SYSTEM_USER },
+    select: { organizationId: true },
+  })
+  if (!user) return null
+
+  if (req.authUser?.userType === UserType.OWNER) {
+    const listFilter = await organizationListWhere(req)
+    if (listFilter.organizationId && user.organizationId !== listFilter.organizationId) {
+      return null
+    }
+    return user
+  }
+
+  if (user.organizationId !== req.authUser?.organizationId) {
+    return null
+  }
+  return user
+}
+
 operatorsRouter.get('/', authorize('system-config-operators', 'view'), async (req, res) => {
   const users = await prisma.user.findMany({
     where: {
       userType: UserType.SYSTEM_USER,
-      ...organizationWhere(req),
+      ...(await organizationListWhere(req)),
     },
     include: operatorInclude,
-    orderBy: { username: 'asc' },
+    orderBy: [{ organization: { name: 'asc' } }, { username: 'asc' }],
   })
   return res.json(users.map(formatOperator))
 })
 
 operatorsRouter.get('/:id', authorize('system-config-operators', 'view'), async (req, res) => {
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
     include: operatorInclude,
@@ -158,7 +190,7 @@ operatorsRouter.post('/', authorize('system-config-operators', 'edit'), async (r
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const { username, email, displayName, groupIds } = parsed.data
+  const { username, email, displayName, groupIds, organizationId: requestedOrgId } = parsed.data
   const normalizedEmail = email.toLowerCase().trim()
   const normalizedUsername = username.trim()
 
@@ -171,35 +203,32 @@ operatorsRouter.post('/', authorize('system-config-operators', 'edit'), async (r
     return res.status(409).json({ message: 'Username or email already exists' })
   }
 
-  if (groupIds.length > 0) {
-    const groupCount = await prisma.userGroup.count({
-      where: {
-        id: { in: groupIds },
-        ...(requireOrganizationId(req)
-          ? { organizationId: requireOrganizationId(req)! }
-          : {}),
-      },
-    })
-    if (groupCount !== groupIds.length) {
-      return res.status(400).json({ message: 'Invalid group IDs' })
-    }
-  }
-
-  const organizationId = requireOrganizationId(req)
+  const organizationId = await resolveOrganizationId(req, requestedOrgId)
   if (!organizationId) {
     return res.status(400).json({ message: 'Organization context required' })
+  }
+
+  if (groupIds.length === 0) {
+    return res.status(400).json({ message: 'At least one group is required' })
+  }
+
+  const groupCount = await prisma.userGroup.count({
+      where: {
+        id: { in: groupIds },
+        organizationId,
+      },
+  })
+  if (groupCount !== groupIds.length) {
+    return res.status(400).json({ message: 'Invalid group IDs for the selected organization' })
   }
 
   const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
-  const groupRecords =
-    groupIds.length > 0
-      ? await prisma.userGroup.findMany({
-          where: { id: { in: groupIds } },
-          select: { name: true },
-        })
-      : []
+  const groupRecords = await prisma.userGroup.findMany({
+    where: { id: { in: groupIds } },
+    select: { name: true },
+  })
 
   const user = await prisma.user.create({
     data: {
@@ -243,6 +272,11 @@ operatorsRouter.patch('/:id', authorize('system-config-operators', 'edit'), asyn
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const existing = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
   })
@@ -270,21 +304,34 @@ operatorsRouter.patch('/:id', authorize('system-config-operators', 'edit'), asyn
       }
 
       if (groupIds !== undefined) {
-        const groupCount = await tx.userGroup.count({ where: { id: { in: groupIds } } })
+        if (groupIds.length === 0) {
+          throw new Error('GROUPS_REQUIRED')
+        }
+        const groupCount = await tx.userGroup.count({
+          where: {
+            id: { in: groupIds },
+            organizationId: existing.organizationId ?? undefined,
+          },
+        })
         if (groupCount !== groupIds.length) {
           throw new Error('INVALID_GROUPS')
         }
         await tx.userGroupMember.deleteMany({ where: { userId: existing.id } })
-        if (groupIds.length > 0) {
-          await tx.userGroupMember.createMany({
-            data: groupIds.map((groupId) => ({ userId: existing.id, groupId })),
-          })
-        }
+        await tx.userGroupMember.createMany({
+          data: groupIds.map((groupId) => ({ userId: existing.id, groupId })),
+        })
+        await tx.refreshToken.updateMany({
+          where: { userId: existing.id, status: TokenStatus.ACTIVE },
+          data: { status: TokenStatus.REVOKED },
+        })
       }
     })
   } catch (err) {
     if (err instanceof Error && err.message === 'INVALID_GROUPS') {
-      return res.status(400).json({ message: 'Invalid group IDs' })
+      return res.status(400).json({ message: 'Invalid group IDs for this operator organization' })
+    }
+    if (err instanceof Error && err.message === 'GROUPS_REQUIRED') {
+      return res.status(400).json({ message: 'At least one group is required' })
     }
     throw err
   }
@@ -297,6 +344,11 @@ operatorsRouter.patch('/:id', authorize('system-config-operators', 'edit'), asyn
 })
 
 operatorsRouter.post('/:id/resend-invite', authorize('system-config-operators', 'edit'), async (req, res) => {
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
     include: operatorInclude,
@@ -343,6 +395,11 @@ operatorsRouter.post('/:id/resend-invite', authorize('system-config-operators', 
 })
 
 operatorsRouter.post('/:id/reset-password', authorize('system-config-operators', 'edit'), async (req, res) => {
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
     include: operatorInclude,
@@ -378,6 +435,11 @@ operatorsRouter.post('/:id/reset-password', authorize('system-config-operators',
 })
 
 operatorsRouter.post('/:id/disable', authorize('system-config-operators', 'edit'), async (req, res) => {
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
     include: operatorInclude,
@@ -397,6 +459,11 @@ operatorsRouter.post('/:id/disable', authorize('system-config-operators', 'edit'
 })
 
 operatorsRouter.post('/:id/enable', authorize('system-config-operators', 'edit'), async (req, res) => {
+  const scoped = await assertOperatorInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Operator not found' })
+  }
+
   const user = await prisma.user.findFirst({
     where: { id: paramId(req), userType: UserType.SYSTEM_USER },
     include: operatorInclude,

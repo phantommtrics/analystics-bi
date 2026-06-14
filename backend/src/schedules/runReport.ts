@@ -6,6 +6,7 @@ import {
 } from '../reports/exportFiles.js'
 import { applySqlFilters } from '../reports/sqlFilters.js'
 import { getSavedReportById } from '../reports/service.js'
+import { log } from '../utils/logger.js'
 import {
   buildScheduleExecuteFilters,
   formatScheduleFilterLabel,
@@ -33,6 +34,7 @@ export async function runScheduledReport(
 
   const filters = buildScheduleExecuteFilters(report.sql, ctx)
   const sql = applySqlFilters(report.sql, filters)
+  log('report-schedule', `Running scheduled report="${report.name}" id=${reportId}`)
   const result = await executeDataSourceQuery(report.dataSourceId, sql)
 
   const range = scheduleDateRange(ctx)

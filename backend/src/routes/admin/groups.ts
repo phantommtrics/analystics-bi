@@ -4,7 +4,7 @@ import { prisma } from '../../prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize, authorizeAny } from '../../middleware/authorize.js'
 import { paramId } from '../../utils/params.js'
-import { organizationWhere, requireOrganizationId } from '../../organization/scope.js'
+import { organizationListWhere, resolveOrganizationId } from '../../organization/scope.js'
 
 export const groupsRouter = Router()
 
@@ -14,6 +14,7 @@ const createGroupSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   roleId: z.string().min(1),
+  organizationId: z.string().min(1).optional(),
 })
 
 const updateGroupSchema = z.object({
@@ -27,7 +28,9 @@ function formatGroup(group: {
   name: string
   description: string | null
   roleId: string
+  organizationId: string
   role: { id: string; name: string }
+  organization: { id: string; name: string }
   createdAt: Date
   updatedAt: Date
   _count: { members: number }
@@ -38,6 +41,8 @@ function formatGroup(group: {
     description: group.description,
     roleId: group.roleId,
     role: group.role,
+    organizationId: group.organizationId,
+    organizationName: group.organization.name,
     memberCount: group._count.members,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
@@ -46,6 +51,7 @@ function formatGroup(group: {
 
 const groupInclude = {
   role: { select: { id: true, name: true } },
+  organization: { select: { id: true, name: true } },
   _count: { select: { members: true } },
 } as const
 
@@ -58,7 +64,7 @@ groupsRouter.get(
   ]),
   async (req, res) => {
   const groups = await prisma.userGroup.findMany({
-    where: organizationWhere(req),
+    where: await organizationListWhere(req),
     include: groupInclude,
     orderBy: { name: 'asc' },
   })
@@ -83,7 +89,7 @@ groupsRouter.post('/', authorize('system-config-groups', 'edit'), async (req, re
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const organizationId = requireOrganizationId(req)
+  const organizationId = await resolveOrganizationId(req, parsed.data.organizationId)
   if (!organizationId) {
     return res.status(400).json({ message: 'Organization context required' })
   }

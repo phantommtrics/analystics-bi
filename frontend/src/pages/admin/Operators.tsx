@@ -6,7 +6,7 @@ import { ConfirmModal } from '../../components/ui/ConfirmModal'
 import { DataTable } from '../../components/ui/DataTable'
 import { LoadingButton } from '../../components/ui/LoadingButton'
 import { MultiSelectDropdown } from '../../components/ui/MultiSelectDropdown'
-import { adminApi, type GroupSummary, type OperatorSummary } from '../../api/admin'
+import { adminApi, type GroupSummary, type OperatorSummary, type OrganizationSummary } from '../../api/admin'
 import { useAuth } from '../../auth/AuthContext'
 
 type ActionKey = 'invite' | 'resend' | 'reset' | 'disable' | 'enable'
@@ -30,31 +30,75 @@ function FieldInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 }
 
 export function Operators() {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const [operators, setOperators] = useState<OperatorSummary[]>([])
   const [groups, setGroups] = useState<GroupSummary[]>([])
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [groupsLoading, setGroupsLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [showForm, setShowForm] = useState(false)
+  const [editingGroupsOperator, setEditingGroupsOperator] = useState<OperatorSummary | null>(null)
+  const [editGroupIds, setEditGroupIds] = useState<string[]>([])
   const [pending, setPending] = useState<PendingAction>(null)
   const [form, setForm] = useState({
     username: '',
     email: '',
     displayName: '',
     groupIds: [] as string[],
+    organizationId: '',
   })
+
+  const isOwner = user?.userType === 'OWNER'
+  const defaultOrgId =
+    organizations.find((o) => o.isDefault)?.id ?? organizations[0]?.id ?? ''
+  const effectiveOrgId =
+    form.organizationId || defaultOrgId || user?.organization?.id || ''
+  const selectedOrgName =
+    organizations.find((o) => o.id === effectiveOrgId)?.name ??
+    user?.organization?.name ??
+    'this organization'
+
+  const loadGroups = useCallback(
+    async (organizationId?: string) => {
+      if (!accessToken) return
+      setGroupsLoading(true)
+      try {
+        // Owners see all groups and filter client-side by selected org.
+        const groupList = await adminApi.listGroups(
+          accessToken,
+          isOwner ? undefined : organizationId,
+        )
+        setGroups(groupList)
+      } finally {
+        setGroupsLoading(false)
+      }
+    },
+    [accessToken, isOwner],
+  )
 
   const loadData = useCallback(async () => {
     if (!accessToken) return
-    const [opList, groupList] = await Promise.all([
-      adminApi.listOperators(accessToken),
-      adminApi.listGroups(accessToken),
-    ])
+    const orgList = isOwner ? await adminApi.listOrganizations(accessToken) : []
+    const selectedOrgId =
+      form.organizationId ||
+      user?.organization?.id ||
+      orgList.find((o) => o.isDefault)?.id ||
+      orgList[0]?.id ||
+      undefined
+    const opList = await adminApi.listOperators(
+      accessToken,
+      isOwner ? undefined : selectedOrgId,
+    )
+    setOrganizations(orgList)
     setOperators(opList)
-    setGroups(groupList)
-  }, [accessToken])
+    if (!form.organizationId && selectedOrgId) {
+      setForm((f) => ({ ...f, organizationId: selectedOrgId }))
+    }
+    await loadGroups(selectedOrgId)
+  }, [accessToken, form.organizationId, isOwner, loadGroups, user?.organization?.id])
 
   useEffect(() => {
     if (!accessToken) return
@@ -64,15 +108,70 @@ export function Operators() {
       .finally(() => setLoading(false))
   }, [accessToken, loadData])
 
+  useEffect(() => {
+    if (!showForm || !accessToken) return
+    void loadGroups(isOwner ? undefined : effectiveOrgId || undefined)
+  }, [showForm, accessToken, effectiveOrgId, isOwner, loadGroups])
+
   const groupOptions = useMemo(
     () =>
-      groups.map((g) => ({
+      groups
+        .filter((g) => !effectiveOrgId || g.organizationId === effectiveOrgId)
+        .map((g) => ({
+          id: g.id,
+          label: g.name,
+          description: isOwner ? `${g.role.name} · ${g.organizationName}` : g.role.name,
+        })),
+    [groups, effectiveOrgId, isOwner],
+  )
+
+  const editGroupOptions = useMemo(() => {
+    if (!editingGroupsOperator) return []
+    const orgId = editingGroupsOperator.organizationId
+    return groups
+      .filter((g) => !orgId || g.organizationId === orgId)
+      .map((g) => ({
         id: g.id,
         label: g.name,
-        description: g.role.name,
-      })),
-    [groups],
-  )
+        description: isOwner ? `${g.role.name} · ${g.organizationName}` : g.role.name,
+      }))
+  }, [groups, editingGroupsOperator, isOwner])
+
+  const editGroupsDirty = useMemo(() => {
+    if (!editingGroupsOperator) return false
+    const current = [...editingGroupsOperator.groups.map((g) => g.id)].sort().join(',')
+    const next = [...editGroupIds].sort().join(',')
+    return current !== next
+  }, [editingGroupsOperator, editGroupIds])
+
+  function openEditGroups(operator: OperatorSummary) {
+    setShowForm(false)
+    setEditingGroupsOperator(operator)
+    setEditGroupIds(operator.groups.map((g) => g.id))
+    void loadGroups(isOwner ? undefined : operator.organizationId ?? undefined)
+  }
+
+  async function saveGroupChanges() {
+    if (!accessToken || !editingGroupsOperator || editGroupIds.length === 0) return
+    setActionLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      await adminApi.updateOperator(accessToken, editingGroupsOperator.id, {
+        groupIds: editGroupIds,
+      })
+      setSuccess(
+        `Groups updated for ${editingGroupsOperator.displayName ?? editingGroupsOperator.username}. They must sign in again for new permissions to apply.`,
+      )
+      setEditingGroupsOperator(null)
+      setEditGroupIds([])
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update groups')
+    } finally {
+      setActionLoading(false)
+    }
+  }
 
   async function executeInvite() {
     if (!accessToken) return
@@ -85,6 +184,7 @@ export function Operators() {
         email: form.email.trim(),
         displayName: form.displayName.trim() || undefined,
         groupIds: form.groupIds,
+        organizationId: form.organizationId || defaultOrgId || undefined,
       })
       const warn = (created as { emailWarning?: string }).emailWarning
       setSuccess(
@@ -93,7 +193,13 @@ export function Operators() {
           : `Invitation sent to ${created.email}`,
       )
       setShowForm(false)
-      setForm({ username: '', email: '', displayName: '', groupIds: [] })
+      setForm({
+        username: '',
+        email: '',
+        displayName: '',
+        groupIds: [],
+        organizationId: defaultOrgId,
+      })
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create operator')
@@ -155,7 +261,7 @@ export function Operators() {
     if (p.type === 'invite') {
       return {
         title: 'Send invitation?',
-        message: `Invite ${form.email.trim()} as a system operator? A temporary password will be emailed and must be changed on first login.`,
+        message: `Invite ${form.email.trim()} as a system operator with ${form.groupIds.length} group(s)? A temporary password will be emailed and must be changed on first login.`,
         label: 'Send invitation',
         variant: 'primary',
       }
@@ -205,7 +311,13 @@ export function Operators() {
         title="Operators"
         primaryAction={{
           label: 'Invite Operator',
-          onClick: () => setShowForm(true),
+          onClick: () => {
+            setEditingGroupsOperator(null)
+            setShowForm(true)
+            if (!form.organizationId && defaultOrgId) {
+              setForm((f) => ({ ...f, organizationId: defaultOrgId, groupIds: [] }))
+            }
+          },
           icon: 'ti-user-plus',
         }}
       />
@@ -234,6 +346,32 @@ export function Operators() {
             </div>
 
             <div className="space-y-6 p-6">
+              {isOwner && organizations.length > 0 && (
+                <section>
+                  <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                    Organization
+                  </h4>
+                  <select
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+                    value={form.organizationId || defaultOrgId}
+                    onChange={(e) => {
+                      const organizationId = e.target.value
+                      setForm((f) => ({ ...f, organizationId, groupIds: [] }))
+                    }}
+                  >
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                        {org.isDefault ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    System users are created in the selected organization and only see its data.
+                  </p>
+                </section>
+              )}
+
               <section>
                 <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-secondary">
                   Account details
@@ -270,21 +408,31 @@ export function Operators() {
 
               <section>
                 <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                  Access — user groups
+                  Access — user groups <span className="text-semantic-red">*</span>
                 </h4>
                 <MultiSelectDropdown
                   options={groupOptions}
                   selectedIds={form.groupIds}
                   onChange={(groupIds) => setForm((f) => ({ ...f, groupIds }))}
-                  placeholder="Select user groups..."
+                  placeholder={
+                    groupsLoading ? 'Loading groups...' : 'Select at least one user group...'
+                  }
                   searchPlaceholder="Search groups by name or role..."
                   emptyMessage={
-                    groups.length === 0
-                      ? 'No groups yet. Create groups under System Configuration → User Groups.'
-                      : 'No groups match your search'
+                    groupsLoading
+                      ? 'Loading groups...'
+                      : groupOptions.length === 0
+                        ? `No groups in ${selectedOrgName}. Create them under System Configuration → User Groups.`
+                        : 'No groups match your search'
                   }
-                  disabled={groups.length === 0}
+                  disabled={groupsLoading || groupOptions.length === 0}
                 />
+                {!groupsLoading && groupOptions.length === 0 && (
+                  <p className="mt-2 text-xs text-amber-700">
+                    At least one group is required. Create groups in {selectedOrgName} before
+                    inviting an operator.
+                  </p>
+                )}
               </section>
             </div>
 
@@ -293,11 +441,75 @@ export function Operators() {
                 Cancel
               </LoadingButton>
               <LoadingButton
-                disabled={!form.username.trim() || !form.email.trim()}
+                disabled={
+                  !form.username.trim() ||
+                  !form.email.trim() ||
+                  form.groupIds.length === 0 ||
+                  groupsLoading
+                }
                 loading={actionLoading && pending?.type === 'invite'}
                 onClick={() => setPending({ type: 'invite' })}
               >
                 Send invitation
+              </LoadingButton>
+            </div>
+          </Card>
+        )}
+
+        {editingGroupsOperator && (
+          <Card className="mb-6 overflow-hidden">
+            <div className="border-b border-border bg-bg-secondary/50 px-6 py-4">
+              <h3 className="text-lg font-semibold text-text-primary">Change groups</h3>
+              <p className="mt-1 text-sm text-text-secondary">
+                Move{' '}
+                <span className="font-medium text-text-primary">
+                  {editingGroupsOperator.displayName ?? editingGroupsOperator.username}
+                </span>{' '}
+                to different groups within{' '}
+                {editingGroupsOperator.organizationName ?? 'their organization'}. Active sessions
+                are revoked; the user must sign in again for new permissions.
+              </p>
+            </div>
+            <div className="space-y-4 p-6">
+              <div>
+                <FieldLabel>User groups *</FieldLabel>
+                <MultiSelectDropdown
+                  options={editGroupOptions}
+                  selectedIds={editGroupIds}
+                  onChange={setEditGroupIds}
+                  placeholder={
+                    groupsLoading ? 'Loading groups...' : 'Select at least one user group...'
+                  }
+                  searchPlaceholder="Search groups by name or role..."
+                  emptyMessage={
+                    groupsLoading
+                      ? 'Loading groups...'
+                      : editGroupOptions.length === 0
+                        ? 'No groups available for this organization.'
+                        : 'No groups match your search'
+                  }
+                  disabled={groupsLoading || editGroupOptions.length === 0}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-border bg-bg-secondary/30 px-6 py-4">
+              <LoadingButton
+                variant="secondary"
+                onClick={() => {
+                  setEditingGroupsOperator(null)
+                  setEditGroupIds([])
+                }}
+              >
+                Cancel
+              </LoadingButton>
+              <LoadingButton
+                loading={actionLoading}
+                disabled={
+                  editGroupIds.length === 0 || !editGroupsDirty || groupsLoading
+                }
+                onClick={saveGroupChanges}
+              >
+                Save groups
               </LoadingButton>
             </div>
           </Card>
@@ -329,6 +541,15 @@ export function Operators() {
                     </div>
                   ),
                 },
+                ...(isOwner
+                  ? [
+                      {
+                        header: 'Organization',
+                        accessor: (o: OperatorSummary) => o.organizationName ?? '—',
+                        className: 'text-sm text-text-secondary',
+                      },
+                    ]
+                  : []),
                 {
                   header: 'Groups',
                   accessor: (o) =>
@@ -375,6 +596,15 @@ export function Operators() {
                   header: 'Actions',
                   accessor: (o) => (
                     <div className="flex flex-wrap gap-1">
+                      <LoadingButton
+                        variant="ghost"
+                        className="px-2 py-1 text-xs"
+                        loading={actionLoading && editingGroupsOperator?.id === o.id}
+                        onClick={() => openEditGroups(o)}
+                      >
+                        <i className="ti ti-users-group"></i>
+                        Change groups
+                      </LoadingButton>
                       {o.status === 'ACTIVE' && o.mustChangePassword && (
                         <LoadingButton
                           variant="ghost"

@@ -56,6 +56,8 @@ export interface GroupSummary {
   description: string | null
   roleId: string
   role: { id: string; name: string }
+  organizationId: string
+  organizationName: string
   memberCount: number
 }
 
@@ -69,6 +71,8 @@ export interface OperatorSummary {
   status: 'ACTIVE' | 'DISABLED'
   mustChangePassword: boolean
   lastLoginAt: string | null
+  organizationId: string | null
+  organizationName: string | null
   roles: { id: string; name: string }[]
   groups: { id: string; name: string }[]
 }
@@ -107,14 +111,18 @@ export const adminApi = {
   deleteRole: (token: string, id: string) =>
     adminFetch<void>(`/roles/${id}`, token, { method: 'DELETE' }),
 
-  listGroups: (token: string) => adminFetch<GroupSummary[]>('/groups', token),
+  listGroups: (token: string, organizationId?: string) =>
+    adminFetch<GroupSummary[]>(
+      organizationId ? `/groups?organizationId=${encodeURIComponent(organizationId)}` : '/groups',
+      token,
+    ),
 
   getGroup: (token: string, id: string) =>
     adminFetch<GroupDetail>(`/groups/${id}`, token),
 
   createGroup: (
     token: string,
-    data: { name: string; description?: string; roleId: string },
+    data: { name: string; description?: string; roleId: string; organizationId?: string },
   ) =>
     adminFetch<GroupSummary>('/groups', token, {
       method: 'POST',
@@ -134,8 +142,13 @@ export const adminApi = {
   deleteGroup: (token: string, id: string) =>
     adminFetch<void>(`/groups/${id}`, token, { method: 'DELETE' }),
 
-  listOperators: (token: string) =>
-    adminFetch<OperatorSummary[]>('/operators', token),
+  listOperators: (token: string, organizationId?: string) =>
+    adminFetch<OperatorSummary[]>(
+      organizationId
+        ? `/operators?organizationId=${encodeURIComponent(organizationId)}`
+        : '/operators',
+      token,
+    ),
 
   createOperator: (
     token: string,
@@ -144,6 +157,7 @@ export const adminApi = {
       email: string
       displayName?: string
       groupIds: string[]
+      organizationId?: string
     },
   ) =>
     adminFetch<OperatorSummary>('/operators', token, {
@@ -200,10 +214,28 @@ export const adminApi = {
       industry?: string
       billingOwnerEmail: string
       billingOwnerName: string
+      isDefault?: boolean
     },
   ) =>
     adminFetch<OrganizationSummary>('/organizations', token, {
       method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  updateOrganization: (
+    token: string,
+    orgId: string,
+    body: {
+      name?: string
+      slug?: string
+      industry?: string | null
+      billingOwnerEmail?: string
+      billingOwnerName?: string
+      isDefault?: boolean
+    },
+  ) =>
+    adminFetch<OrganizationSummary>(`/organizations/${orgId}`, token, {
+      method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
@@ -243,6 +275,7 @@ export interface OrganizationSummary {
   slug: string
   industry: string | null
   status: string
+  isDefault: boolean
   billingOwnerEmail: string | null
   billingOwnerName: string | null
   directPayBusinessId: string | null

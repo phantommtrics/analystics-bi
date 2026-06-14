@@ -144,7 +144,7 @@ export async function startDirectPaySubscription(
     {
       method: 'POST',
       body: {
-        planCode: input?.planCode ?? 'BUSINESS_PRO',
+        planCode: input?.planCode ?? 'CORPORATE',
         billingInterval: input?.billingInterval,
       },
     },

@@ -49,7 +49,7 @@ function buildReminderHtml(payload: SubscriptionReminderEmailPayload): string {
   const name = escapeHtml(payload.billingOwnerName)
   const orgName = escapeHtml(payload.organizationName)
   const status = escapeHtml(payload.subscriptionStatus)
-  const plan = escapeHtml(payload.planCode ?? 'Business Pro')
+  const plan = escapeHtml(payload.planCode ?? 'Corporate')
   const periodEnd = escapeHtml(formatDisplayDate(payload.periodEnd))
   const daysLeft =
     payload.daysRemaining !== null

@@ -122,7 +122,7 @@ export function Organizations() {
     setSuccess('')
     try {
       const result = await adminApi.startDirectPaySubscription(accessToken, org.id)
-      setSuccess(`Business Pro subscription started for ${org.name}`)
+      setSuccess(`Corporate plan subscription started for ${org.name}`)
       if (result.subscription.payUrl) {
         setSuccess(
           `${result.subscription.payUrl ? 'Subscription started. Use Pay in DirectPay when ready.' : 'Subscription started.'}`,
@@ -168,7 +168,7 @@ export function Organizations() {
 
         {!hasOrg && !loading && (
           <p className="mb-4 text-sm text-text-secondary">
-            Create your organization once, then provision DirectPay and start the Business Pro
+            Create your organization once, then provision DirectPay and start the Corporate
             subscription. Subscription payment is completed in DirectPay (see Pay button after
             starting subscription).
           </p>
@@ -285,7 +285,7 @@ export function Organizations() {
                         loading={actionLoading}
                         onClick={() => startSubscription(org)}
                       >
-                        Start Business Pro
+                        Start Corporate Plan
                       </LoadingButton>
                     )}
                     {org.subscription.payUrl && (

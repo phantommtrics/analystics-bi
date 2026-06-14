@@ -68,11 +68,12 @@ function formatDetail(report: Prisma.SavedReportGetPayload<{ include: typeof rep
   }
 }
 
-async function assertUniqueActiveName(name: string, excludeId?: string) {
+async function assertUniqueActiveName(name: string, organizationId: string, excludeId?: string) {
   const existing = await prisma.savedReport.findFirst({
     where: {
       name: { equals: name, mode: 'insensitive' },
       deletedAt: null,
+      organizationId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
@@ -91,6 +92,7 @@ export type CreateSavedReportInput = {
   visualization: ReportVisualization
   dataSourceId: string
   createdById?: string
+  organizationId: string
 }
 
 export type UpdateSavedReportInput = {
@@ -108,8 +110,13 @@ export async function listSavedReports(options?: {
   category?: ReportCategory
   search?: string
   includeDeleted?: boolean
+  organizationId?: string
 }): Promise<SavedReportListItem[]> {
   const where: Prisma.SavedReportWhereInput = {}
+
+  if (options?.organizationId) {
+    where.organizationId = options.organizationId
+  }
 
   if (!options?.includeDeleted) {
     where.deletedAt = null
@@ -155,6 +162,7 @@ export async function listAccessibleReports(
   options?: {
     category?: ReportCategory
     search?: string
+    organizationId?: string
   },
   userType?: UserType,
 ): Promise<SavedReportListItem[]> {
@@ -165,6 +173,10 @@ export async function listAccessibleReports(
   const where: Prisma.SavedReportWhereInput = {
     deletedAt: null,
     isPublished: true,
+  }
+
+  if (options?.organizationId) {
+    where.organizationId = options.organizationId
   }
 
   if (options?.category) {
@@ -197,8 +209,9 @@ export async function listAccessibleReports(
 export async function listAccessibleSidebarReports(
   permissions: string[],
   userType?: UserType,
+  organizationId?: string,
 ): Promise<SavedReportListItem[]> {
-  const reports = await listAccessibleReports(permissions, undefined, userType)
+  const reports = await listAccessibleReports(permissions, { organizationId }, userType)
   return reports.filter((report) => report.showInSidebarMenu)
 }
 
@@ -227,7 +240,7 @@ export async function createSavedReport(input: CreateSavedReportInput): Promise<
     throw new Error('DATA_SOURCE_NOT_FOUND')
   }
 
-  await assertUniqueActiveName(input.name)
+  await assertUniqueActiveName(input.name, input.organizationId)
 
   const report = await prisma.savedReport.create({
     data: {
@@ -241,6 +254,7 @@ export async function createSavedReport(input: CreateSavedReportInput): Promise<
       sql: input.sql,
       visualization: input.visualization,
       dataSourceId: input.dataSourceId,
+      organizationId: input.organizationId,
       isPublished: false,
       createdById: input.createdById,
       updatedById: input.createdById,
@@ -263,7 +277,7 @@ export async function updateSavedReport(
   }
 
   if (input.name) {
-    await assertUniqueActiveName(input.name, id)
+    await assertUniqueActiveName(input.name, existing.organizationId, id)
   }
 
   if (input.dataSourceId) {

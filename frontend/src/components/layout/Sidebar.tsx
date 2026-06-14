@@ -156,6 +156,11 @@ const systemConfigItems = [
     path: '/admin/system/datasources',
     moduleKey: 'system-config-datasources',
   },
+  {
+    label: 'Organizations',
+    path: '/admin/system/organizations',
+    moduleKey: 'owner-only',
+  },
 ] as const
 
 interface SidebarProps {
@@ -256,7 +261,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   }, [activeViewDashboardId, visibleSidebarDashboards])
 
   const visibleSystemConfigItems = systemConfigItems.filter((item) =>
-    hasPermission(item.moduleKey, 'view'),
+    item.moduleKey === 'owner-only'
+      ? user?.userType === 'OWNER'
+      : hasPermission(item.moduleKey, 'view'),
   )
   const canAccessSystemConfig = visibleSystemConfigItems.length > 0
   const systemConfigActive = location.pathname.startsWith('/admin/system')

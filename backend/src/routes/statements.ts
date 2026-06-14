@@ -25,6 +25,7 @@ import {
   userCanViewStatement,
 } from '../statements/permissions.js'
 import { paramId } from '../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../organization/scope.js'
 
 export const statementsRouter = Router()
 
@@ -115,7 +116,12 @@ statementsRouter.get('/', viewStatements, async (req, res) => {
     return res.status(403).json({ message: 'Forbidden' })
   }
 
-  const statements = await listStatements(search, parsedCategory, parsedType)
+  const statements = await listStatements(
+    search,
+    parsedCategory,
+    parsedType,
+    organizationWhere(req).organizationId,
+  )
   return res.json(statements)
 })
 
@@ -260,6 +266,11 @@ statementsRouter.post('/', editStatements, async (req, res) => {
     return res.status(400).json(validationErrorBody(parsed.error))
   }
 
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   try {
     const config = parseConfigForType(parsed.data.type, parsed.data.config)
     const statement = await createStatement({
@@ -269,6 +280,7 @@ statementsRouter.post('/', editStatements, async (req, res) => {
       category: parsed.data.category,
       config,
       createdById: req.authUser?.id,
+      organizationId,
     })
     return res.status(201).json(statement)
   } catch (error) {

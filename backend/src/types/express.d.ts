@@ -1,4 +1,5 @@
 import type { UserType } from '@prisma/client'
+import type { OrganizationSubscriptionView } from '../directpay/subscription-sync.js'
 
 declare global {
   namespace Express {
@@ -11,7 +12,9 @@ declare global {
         displayName: string | null
         permissions: string[]
         mustChangePassword: boolean
+        organizationId: string | null
       }
+      subscription?: OrganizationSubscriptionView
     }
   }
 }

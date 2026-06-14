@@ -11,6 +11,7 @@ import {
   updateDataSource,
 } from '../../datasources/service.js'
 import { paramId } from '../../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../../organization/scope.js'
 
 export const datasourcesRouter = Router()
 
@@ -48,7 +49,11 @@ datasourcesRouter.get(
   ]),
   async (req, res) => {
     const activeOnly = req.query.active === 'true'
-    const dataSources = await listDataSources(activeOnly)
+    const orgFilter = organizationWhere(req)
+    const dataSources = await listDataSources(
+      activeOnly,
+      orgFilter.organizationId,
+    )
     return res.json(dataSources)
   },
 )
@@ -59,10 +64,16 @@ datasourcesRouter.post('/', authorize('system-config-datasources', 'edit'), asyn
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   try {
     const dataSource = await createDataSource({
       ...parsed.data,
       createdById: req.authUser?.id,
+      organizationId,
     })
     return res.status(201).json(dataSource)
   } catch {

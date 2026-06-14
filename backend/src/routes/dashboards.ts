@@ -21,6 +21,7 @@ import {
   userCanViewDashboard,
 } from '../dashboards/permissions.js'
 import { paramId } from '../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../organization/scope.js'
 
 export const dashboardsRouter = Router()
 
@@ -53,6 +54,8 @@ dashboardsRouter.get('/', async (req, res) => {
   const accessibleOnly = req.query.accessibleOnly === 'true'
   const sidebarMenuOnly = req.query.sidebarMenuOnly === 'true'
   const permissions = req.authUser?.permissions ?? []
+  const orgFilter = organizationWhere(req)
+  const organizationId = orgFilter.organizationId
 
   if (accessibleOnly) {
     await ensureAllDashboardPermissions()
@@ -67,6 +70,7 @@ dashboardsRouter.get('/', async (req, res) => {
       permissions,
       search,
       req.authUser?.userType,
+      organizationId,
     )
     return res.json(
       dashboards.filter((dashboard) => !dashboard.showInSidebarMenu),
@@ -80,7 +84,7 @@ dashboardsRouter.get('/', async (req, res) => {
     return res.status(403).json({ message: 'Forbidden' })
   }
 
-  const dashboards = await listDashboards(search)
+  const dashboards = await listDashboards(search, organizationId)
   return res.json(dashboards)
 })
 
@@ -162,10 +166,16 @@ dashboardsRouter.post('/', editDashboards, async (req, res) => {
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   try {
     const dashboard = await createDashboard({
       ...parsed.data,
       createdById: req.authUser?.id,
+      organizationId,
     })
     return res.status(201).json(dashboard)
   } catch (error) {

@@ -10,9 +10,13 @@ import { dashboardsRouter } from './routes/dashboards.js'
 import { statementsRouter } from './routes/statements.js'
 import { schedulesRouter } from './routes/schedules.js'
 import { auditLogsRouter } from './routes/audit-logs.js'
+import { directPayWebhooksRouter } from './routes/webhooks/directpay.js'
 import { auditLogMiddleware } from './middleware/auditLog.js'
+import { authenticate } from './middleware/authenticate.js'
+import { requireActiveSubscription } from './middleware/requireActiveSubscription.js'
 import { startReportScheduleProcessor } from './schedules/processor.js'
 import { startStatementScheduleProcessor } from './schedules/statementProcessor.js'
+import { startSubscriptionReminderProcessor } from './directpay/subscription-reminder-processor.js'
 
 const app = express()
 
@@ -23,6 +27,9 @@ app.use(
     origin: env.CORS_ORIGIN,
   }),
 )
+
+app.use('/api/webhooks', directPayWebhooksRouter)
+
 app.use(express.json())
 app.use(auditLogMiddleware)
 
@@ -32,16 +39,23 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authRouter)
 app.use('/api/admin', adminRouter)
-app.use('/api/report-builder', reportBuilderRouter)
-app.use('/api/reports', reportsRouter)
-app.use('/api/dashboards', dashboardsRouter)
-app.use('/api/statements', statementsRouter)
-app.use('/api/schedules', schedulesRouter)
-app.use('/api/audit-logs', auditLogsRouter)
-app.use('/api', protectedRouter)
+
+const subscriptionProtected = express.Router()
+subscriptionProtected.use(authenticate)
+subscriptionProtected.use(requireActiveSubscription)
+subscriptionProtected.use('/report-builder', reportBuilderRouter)
+subscriptionProtected.use('/reports', reportsRouter)
+subscriptionProtected.use('/dashboards', dashboardsRouter)
+subscriptionProtected.use('/statements', statementsRouter)
+subscriptionProtected.use('/schedules', schedulesRouter)
+subscriptionProtected.use('/audit-logs', auditLogsRouter)
+subscriptionProtected.use('/', protectedRouter)
+
+app.use('/api', subscriptionProtected)
 
 app.listen(env.PORT, () => {
   console.log(`API listening on http://localhost:${env.PORT}`)
   startReportScheduleProcessor()
   startStatementScheduleProcessor()
+  startSubscriptionReminderProcessor()
 })

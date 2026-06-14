@@ -100,6 +100,7 @@ async function main() {
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
+      organizationId: null,
     },
     create: {
       username,
@@ -108,6 +109,7 @@ async function main() {
       userType: UserType.OWNER,
       status: UserStatus.ACTIVE,
       mustChangePassword: false,
+      organizationId: null,
     },
   })
 

@@ -31,6 +31,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       displayName: user.displayName,
       permissions,
       mustChangePassword: user.mustChangePassword,
+      organizationId: user.organizationId,
     }
     next()
   } catch {

@@ -229,6 +229,15 @@ export function buildReportExportPermissions(
   return canExportReport(hasPermission, reportId)
 }
 
+/** Report builder preview: module-level export_csv / export_pdf on report-builder. */
+export function buildReportBuilderExportPermissions(
+  hasPermission: (module: string, action: string) => boolean,
+): WidgetExportPermissions {
+  const canCsv = hasPermission('report-builder', 'export_csv')
+  const canPdf = hasPermission('report-builder', 'export_pdf')
+  return toExportPermissions(canPdf, canCsv)
+}
+
 /** Parent Statements + per-statement RolePermission (export_pdf / export_csv). */
 export function canExportStatement(
   hasPermission: (module: string, action: string) => boolean,

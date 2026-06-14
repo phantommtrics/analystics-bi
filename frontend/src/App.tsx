@@ -7,6 +7,7 @@ import { Roles } from './pages/admin/Roles'
 import { UserGroups } from './pages/admin/UserGroups'
 import { Operators } from './pages/admin/Operators'
 import { DataSources } from './pages/admin/DataSources'
+import { Organizations } from './pages/admin/Organizations'
 import { AgentNetwork } from './pages/AgentNetwork'
 import { AmlAlerts } from './pages/AmlAlerts'
 import { AuditLog } from './pages/AuditLog'
@@ -199,6 +200,7 @@ export function App() {
                 </RequirePermission>
               }
             />
+            <Route path="/admin/system/organizations" element={<Organizations />} />
             <Route
               path="/audit"
               element={

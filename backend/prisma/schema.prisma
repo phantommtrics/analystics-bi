@@ -74,6 +74,40 @@ enum StatementType {
   CUSTOM
 }
 
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Organization {
+  id                      String             @id @default(cuid())
+  name                    String
+  slug                    String             @unique
+  industry                String?
+  status                  OrganizationStatus @default(ACTIVE)
+  billingOwnerEmail       String?
+  billingOwnerName        String?
+  directPayBusinessId     String?            @unique
+  directPaySlug           String?
+  directPaySubscriptionId String?
+  subscriptionStatus      String?
+  subscriptionPeriodEnd   DateTime?
+  subscriptionPeriodStart DateTime?
+  subscriptionBillingInterval String?
+  subscriptionPlanCode    String?
+  subscriptionSyncedAt    DateTime?
+  subscriptionPayUrl      String?
+  subscriptionReminderLastSentAt DateTime?
+  users                   User[]
+  dataSources             DataSource[]
+  userGroups              UserGroup[]
+  savedReports            SavedReport[]
+  dashboards              Dashboard[]
+  statements              Statement[]
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+}
+
 model User {
   id                 String            @id @default(cuid())
   username           String            @unique
@@ -83,6 +117,8 @@ model User {
   userType           UserType
   status             UserStatus        @default(ACTIVE)
   mustChangePassword Boolean           @default(false)
+  organizationId     String?
+  organization       Organization?     @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   lastLoginAt        DateTime?
   roles              UserRole[]
   groups             UserGroupMember[]
@@ -99,6 +135,8 @@ model User {
   auditLogs          AuditLog[]
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
+
+  @@index([organizationId])
 }
 
 model AuditLog {
@@ -163,16 +201,21 @@ model RolePermission {
 }
 
 model UserGroup {
-  id          String            @id @default(cuid())
-  name        String            @unique
-  description String?
-  roleId      String
-  role        Role              @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  members     UserGroupMember[]
+  id             String            @id @default(cuid())
+  name           String
+  description    String?
+  roleId         String
+  organizationId String
+  role           Role              @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        UserGroupMember[]
   reportSchedules    ReportSchedule[]
   statementSchedules StatementSchedule[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }
 
 model UserGroupMember {
@@ -199,7 +242,7 @@ model RefreshToken {
 
 model DataSource {
   id                String         @id @default(cuid())
-  name              String         @unique
+  name              String
   type              DataSourceType @default(POSTGRES)
   host              String
   port              Int            @default(5432)
@@ -208,11 +251,16 @@ model DataSource {
   passwordEncrypted String
   sslMode           SslMode        @default(REQUIRE)
   isActive          Boolean        @default(true)
+  organizationId    String
+  organization      Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdById       String?
   createdBy         User?          @relation(fields: [createdById], references: [id])
   savedReports      SavedReport[]
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }
 
 model SavedReport {
@@ -224,6 +272,8 @@ model SavedReport {
   visualization ReportVisualization @default(BAR_CHART)
   dataSourceId  String
   dataSource    DataSource          @relation(fields: [dataSourceId], references: [id], onDelete: Restrict)
+  organizationId String
+  organization  Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   isPublished        Boolean             @default(false)
   showInSidebarMenu  Boolean             @default(false)
   publishedAt        DateTime?
@@ -242,6 +292,7 @@ model SavedReport {
   @@index([category])
   @@index([isPublished])
   @@index([showInSidebarMenu])
+  @@index([organizationId])
 }
 
 model ReportSchedule {
@@ -274,6 +325,8 @@ model Dashboard {
   name              String
   description       String?
   layout            Json
+  organizationId    String
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   showInSidebarMenu Boolean         @default(false)
   sidebarCategory   ReportCategory?
   isPublished       Boolean         @default(false)
@@ -292,6 +345,7 @@ model Dashboard {
   @@index([isPublished])
   @@index([showInSidebarMenu])
   @@index([sidebarCategory])
+  @@index([organizationId])
 }
 
 model Statement {
@@ -301,6 +355,8 @@ model Statement {
   type        StatementType
   category    ReportCategory @default(GENERAL)
   config      Json
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   isPublished Boolean        @default(false)
   publishedAt DateTime?
   createdById String?
@@ -318,6 +374,7 @@ model Statement {
   @@index([category])
   @@index([type])
   @@index([isPublished])
+  @@index([organizationId])
 }
 
 model StatementSchedule {

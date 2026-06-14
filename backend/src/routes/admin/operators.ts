@@ -8,6 +8,7 @@ import { authorize } from '../../middleware/authorize.js'
 import { sendInviteEmail } from '../../mail/invite.js'
 import { generateTemporaryPassword } from '../../utils/password.js'
 import { paramId } from '../../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../../organization/scope.js'
 
 export const operatorsRouter = Router()
 
@@ -128,9 +129,12 @@ async function issueTemporaryPassword(user: {
   return delivery
 }
 
-operatorsRouter.get('/', authorize('system-config-operators', 'view'), async (_req, res) => {
+operatorsRouter.get('/', authorize('system-config-operators', 'view'), async (req, res) => {
   const users = await prisma.user.findMany({
-    where: { userType: UserType.SYSTEM_USER },
+    where: {
+      userType: UserType.SYSTEM_USER,
+      ...organizationWhere(req),
+    },
     include: operatorInclude,
     orderBy: { username: 'asc' },
   })
@@ -168,10 +172,22 @@ operatorsRouter.post('/', authorize('system-config-operators', 'edit'), async (r
   }
 
   if (groupIds.length > 0) {
-    const groupCount = await prisma.userGroup.count({ where: { id: { in: groupIds } } })
+    const groupCount = await prisma.userGroup.count({
+      where: {
+        id: { in: groupIds },
+        ...(requireOrganizationId(req)
+          ? { organizationId: requireOrganizationId(req)! }
+          : {}),
+      },
+    })
     if (groupCount !== groupIds.length) {
       return res.status(400).json({ message: 'Invalid group IDs' })
     }
+  }
+
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
   }
 
   const temporaryPassword = generateTemporaryPassword()
@@ -194,6 +210,7 @@ operatorsRouter.post('/', authorize('system-config-operators', 'edit'), async (r
       userType: UserType.SYSTEM_USER,
       status: UserStatus.ACTIVE,
       mustChangePassword: true,
+      organizationId,
       groups: { create: groupIds.map((groupId) => ({ groupId })) },
     },
     include: operatorInclude,

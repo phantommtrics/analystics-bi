@@ -34,7 +34,53 @@ customer_hierarchy AS (
   SELECT id FROM hierarchies_d WHERE name = 'Customer' LIMIT 1
 )`
 
-const ENTITY_BALANCE_SUMMARY = `
+/** Current = balance as at end of dateTo; previous = balance as at end of day before dateFrom. */
+export const PERIOD_BALANCE_CTES = `
+latest_balances_current AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+latest_balances_previous AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+period_balances AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.pouch_id, p.pouch_id) AS pouch_id,
+    COALESCE(p.latest_balance, 0) AS previous_balance,
+    COALESCE(c.latest_balance, 0) AS current_balance,
+    p.balance_as_of AS previous_balance_as_of,
+    c.balance_as_of AS current_balance_as_of
+  FROM latest_balances_current c
+  FULL OUTER JOIN latest_balances_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.pouch_id = p.pouch_id
+)`
+
+export const ENTITY_BALANCE_SUMMARY = `
 WITH entities_d AS (
   SELECT DISTINCT ON (id) id, name
   FROM entities
@@ -53,19 +99,7 @@ pouches_d AS (
   WHERE deleted_at IS NULL
   ORDER BY id
 ),
-latest_balances AS (
-  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
-    t.user_identifier,
-    t.entity_id,
-    t.pouch_id,
-    t.after_balance::numeric AS latest_balance
-  FROM transactions t
-  WHERE t.deleted_at IS NULL
-    AND t.after_balance IS NOT NULL
-    AND t.user_identifier IS NOT NULL
-    AND t.created_at < CAST(:dateToExclusive AS timestamp)
-  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
-),
+${PERIOD_BALANCE_CTES},
 all_profiles AS (
   SELECT
     'agent'::text AS profile_type,
@@ -110,15 +144,21 @@ user_ctx AS (
 ),
 ${CUSTOMER_HIERARCHY_CTES}
 SELECT
-  :dateTo AS as_at_date,
+  :dateFrom AS period_start,
+  :dateTo AS period_end,
+  (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_as_at_date,
+  CAST(:dateTo AS date) AS current_as_at_date,
   COALESCE(h.name, 'Unassigned') AS hierarchy_name,
   e.name AS entity_name,
   p.name AS pouch_name,
   l.pouch_id,
   COUNT(*) AS user_count,
-  COUNT(*) FILTER (WHERE l.latest_balance = 0) AS zero_balance_users,
-  SUM(l.latest_balance) AS total_balance
-FROM latest_balances l
+  COUNT(*) FILTER (WHERE l.previous_balance = 0) AS zero_previous_balance_users,
+  COUNT(*) FILTER (WHERE l.current_balance = 0) AS zero_current_balance_users,
+  SUM(l.previous_balance) AS total_previous_balance,
+  SUM(l.current_balance) AS total_current_balance,
+  SUM(l.current_balance) - SUM(l.previous_balance) AS balance_change
+FROM period_balances l
 INNER JOIN entities_d e ON e.id = l.entity_id
 INNER JOIN pouches_d p ON p.id = l.pouch_id
 CROSS JOIN customer_entity ce
@@ -225,6 +265,107 @@ SELECT
   l.latest_balance,
   l.balance_as_of
 FROM latest_balances l
+INNER JOIN entities_d e ON e.id = l.entity_id
+INNER JOIN pouches_d p ON p.id = l.pouch_id
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
+LEFT JOIN profile_ctx pr ON pr.mobile = l.user_identifier
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE pr.hierarchy_id END
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  l.user_identifier,
+  p.name
+`
+
+export const USER_BALANCE_DETAIL_AS_AT = `
+WITH entities_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM entities
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+hierarchies_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM business_hierarchies
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+pouches_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM pouches
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+${PERIOD_BALANCE_CTES},
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    au.user_id,
+    au.entity_id AS profile_entity_id,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, cu.user_id, cu.entity_id, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, mu.user_id, mu.entity_id, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, eu.user_id, eu.entity_id, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, vu.user_id, NULL::bigint, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, ou.user_id, NULL::bigint, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+profile_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    profile_type,
+    mobile,
+    user_id,
+    profile_entity_id,
+    user_status,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, ${PROFILE_DEDUPE_ORDER}
+),
+${CUSTOMER_HIERARCHY_CTES}
+SELECT
+  :dateFrom AS period_start,
+  :dateTo AS period_end,
+  (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_as_at_date,
+  CAST(:dateTo AS date) AS current_as_at_date,
+  COALESCE(h.name, 'Unassigned') AS hierarchy_name,
+  e.name AS entity_name,
+  p.name AS pouch_name,
+  l.user_identifier AS mobile,
+  pr.user_id,
+  CASE WHEN l.entity_id = ce.id THEN 'customer' ELSE COALESCE(pr.profile_type, 'unknown') END AS profile_type,
+  COALESCE(pr.user_status, 'No user record') AS user_status,
+  l.previous_balance,
+  l.current_balance,
+  l.current_balance - l.previous_balance AS balance_change,
+  l.previous_balance_as_of,
+  l.current_balance_as_of
+FROM period_balances l
 INNER JOIN entities_d e ON e.id = l.entity_id
 INNER JOIN pouches_d p ON p.id = l.pouch_id
 CROSS JOIN customer_entity ce
@@ -538,9 +679,15 @@ async function run() {
   const ds = await prisma.dataSource.findFirst({ where: { isActive: true } })
   if (!ds) throw new Error('No active datasource')
 
+  const dateFilters = {
+    dateFrom: '2026-05-01',
+    dateTo: '2026-05-31',
+  }
+
   const reports = [
     ['Entity Balance Summary', ENTITY_BALANCE_SUMMARY],
     ['User Balance Detail', USER_BALANCE_DETAIL],
+    ['User Balance Detail As At', USER_BALANCE_DETAIL_AS_AT],
     ['Non-Transacting Summary', NON_TX_SUMMARY],
     ['Non-Transacting Detail', NON_TX_DETAIL],
   ] as const
@@ -548,11 +695,8 @@ async function run() {
   for (const [name, sql] of reports) {
     const t0 = Date.now()
     let cleaned = stripOptionalBlocks(sql)
-    if (name === 'Entity Balance Summary') {
-      cleaned = applySqlFilters(cleaned, {
-        dateFrom: '2026-05-01',
-        dateTo: '2026-05-31',
-      })
+    if (name === 'Entity Balance Summary' || name === 'User Balance Detail As At') {
+      cleaned = applySqlFilters(cleaned, dateFilters)
     }
     const result = await executeDataSourceQuery(ds.id, cleaned)
     console.log(`\n=== ${name} (${Date.now() - t0}ms, ${result.rows.length} rows) ===`)
@@ -577,7 +721,9 @@ async function run() {
   await prisma.$disconnect()
 }
 
-run().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+  run().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}

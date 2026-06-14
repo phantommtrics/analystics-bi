@@ -26,6 +26,7 @@ import {
 } from '../reports/permissions.js'
 import { applySqlFilters } from '../reports/sqlFilters.js'
 import { paramId } from '../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../organization/scope.js'
 
 export const reportsRouter = Router()
 
@@ -101,12 +102,16 @@ reportsRouter.get('/', viewReports, async (req, res) => {
     parsedCategory = result.data
   }
 
+  const orgFilter = organizationWhere(req)
+  const organizationId = orgFilter.organizationId
+
   if (accessibleOnly) {
     await ensureAllReportPermissions()
     if (sidebarMenuOnly) {
       const reports = await listAccessibleSidebarReports(
         permissions,
         req.authUser?.userType,
+        organizationId,
       )
       const filtered = parsedCategory
         ? reports.filter((r) => r.category === parsedCategory)
@@ -115,7 +120,7 @@ reportsRouter.get('/', viewReports, async (req, res) => {
     }
     const reports = await listAccessibleReports(
       permissions,
-      { category: parsedCategory, search },
+      { category: parsedCategory, search, organizationId },
       req.authUser?.userType,
     )
     return res.json(reports)
@@ -129,6 +134,7 @@ reportsRouter.get('/', viewReports, async (req, res) => {
     category: parsedCategory,
     search,
     includeDeleted,
+    organizationId,
   })
   return res.json(reports)
 })
@@ -242,10 +248,16 @@ reportsRouter.post('/', editReports, async (req, res) => {
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   try {
     const report = await createSavedReport({
       ...parsed.data,
       createdById: req.authUser?.id,
+      organizationId,
     })
     return res.status(201).json(report)
   } catch (error) {

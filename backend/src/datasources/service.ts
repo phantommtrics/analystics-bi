@@ -38,6 +38,7 @@ export type CreateDataSourceInput = {
   sslMode: SslMode
   isActive?: boolean
   createdById?: string
+  organizationId: string
 }
 
 export type UpdateDataSourceInput = {
@@ -83,9 +84,15 @@ export function getConnectionConfig(record: DataSource): PostgresConnectionConfi
   return toConnectionConfig(record, password)
 }
 
-export async function listDataSources(activeOnly = false): Promise<DataSourcePublic[]> {
+export async function listDataSources(
+  activeOnly = false,
+  organizationId?: string,
+): Promise<DataSourcePublic[]> {
   const records = await prisma.dataSource.findMany({
-    where: activeOnly ? { isActive: true } : undefined,
+    where: {
+      ...(activeOnly ? { isActive: true } : {}),
+      ...(organizationId ? { organizationId } : {}),
+    },
     orderBy: { name: 'asc' },
   })
   return records.map(formatDataSource)
@@ -107,6 +114,7 @@ export async function createDataSource(input: CreateDataSourceInput): Promise<Da
       sslMode: input.sslMode,
       isActive: input.isActive ?? true,
       createdById: input.createdById,
+      organizationId: input.organizationId,
     },
   })
   return formatDataSource(record)

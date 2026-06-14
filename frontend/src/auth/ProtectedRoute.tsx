@@ -1,5 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from './AuthContext'
+import { SubscriptionBlocked } from '../pages/SubscriptionBlocked'
 
 export function ProtectedRoute() {
   const { user, isLoading } = useAuth()
@@ -24,6 +25,12 @@ export function ProtectedRoute() {
 
   if (!user.mustChangePassword && onChangePassword) {
     return <Navigate to="/" replace />
+  }
+
+  const ownerBypass = user.userType === 'OWNER'
+  const subscriptionOk = user.subscription?.accessAllowed !== false
+  if (!ownerBypass && !subscriptionOk && !onChangePassword) {
+    return <SubscriptionBlocked />
   }
 
   return <Outlet />

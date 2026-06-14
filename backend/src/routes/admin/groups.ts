@@ -4,6 +4,7 @@ import { prisma } from '../../prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize, authorizeAny } from '../../middleware/authorize.js'
 import { paramId } from '../../utils/params.js'
+import { organizationWhere, requireOrganizationId } from '../../organization/scope.js'
 
 export const groupsRouter = Router()
 
@@ -55,8 +56,9 @@ groupsRouter.get(
     ['system-config-operators', 'view'],
     ['system-config-operators', 'edit'],
   ]),
-  async (_req, res) => {
+  async (req, res) => {
   const groups = await prisma.userGroup.findMany({
+    where: organizationWhere(req),
     include: groupInclude,
     orderBy: { name: 'asc' },
   })
@@ -81,6 +83,11 @@ groupsRouter.post('/', authorize('system-config-groups', 'edit'), async (req, re
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const organizationId = requireOrganizationId(req)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   const role = await prisma.role.findUnique({ where: { id: parsed.data.roleId } })
   if (!role) {
     return res.status(400).json({ message: 'Invalid role ID' })
@@ -92,6 +99,7 @@ groupsRouter.post('/', authorize('system-config-groups', 'edit'), async (req, re
         name: parsed.data.name,
         description: parsed.data.description,
         roleId: parsed.data.roleId,
+        organizationId,
       },
       include: groupInclude,
     })

@@ -31,6 +31,10 @@ import {
   type QueryEditorSnapshot,
   type QueryTab,
 } from '../lib/queryTabs'
+import {
+  buildReportBuilderExportPermissions,
+  hasAnyExportPermission,
+} from '../lib/widgetExport'
 
 const initialTab = createQueryTab({ title: 'Query 1' })
 
@@ -102,6 +106,16 @@ export function ReportBuilder() {
     if (!activeTab.queryResult) return []
     return rowsToPieData(activeTab.queryResult.columns, activeTab.queryResult.rows)
   }, [activeTab.queryResult])
+
+  const exportPermissions = useMemo(
+    () => buildReportBuilderExportPermissions(hasPermission),
+    [hasPermission],
+  )
+  const showExport = hasAnyExportPermission(exportPermissions)
+  const exportReportName =
+    activeTab.name.trim() && activeTab.name !== 'Untitled report'
+      ? activeTab.name
+      : activeTab.title
 
   const loadSavedReports = useCallback(async () => {
     if (!accessToken) return
@@ -691,6 +705,9 @@ export function ReportBuilder() {
               isRunning={isRunning}
               chartData={chartData}
               pieData={pieData}
+              reportName={exportReportName}
+              showExport={showExport}
+              exportPermissions={exportPermissions}
             />
           </div>
         </div>

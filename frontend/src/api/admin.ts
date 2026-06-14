@@ -188,4 +188,65 @@ export const adminApi = {
     adminFetch<OperatorSummary>(`/operators/${id}/enable`, token, {
       method: 'POST',
     }),
+
+  listOrganizations: (token: string) =>
+    adminFetch<OrganizationSummary[]>('/organizations', token),
+
+  createOrganization: (
+    token: string,
+    body: {
+      name: string
+      slug?: string
+      industry?: string
+      billingOwnerEmail: string
+      billingOwnerName: string
+    },
+  ) =>
+    adminFetch<OrganizationSummary>('/organizations', token, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  provisionDirectPay: (token: string, orgId: string) =>
+    adminFetch<{ ok: boolean; businessId: string; slug: string }>(
+      `/organizations/${orgId}/directpay/provision`,
+      token,
+      { method: 'POST' },
+    ),
+
+  startDirectPaySubscription: (token: string, orgId: string) =>
+    adminFetch<{ subscription: OrganizationSubscription }>(
+      `/organizations/${orgId}/directpay/subscription`,
+      token,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+
+  syncDirectPaySubscription: (token: string, orgId: string) =>
+    adminFetch<{ subscription: OrganizationSubscription }>(
+      `/organizations/${orgId}/directpay/sync`,
+      token,
+      { method: 'POST' },
+    ),
+}
+
+export interface OrganizationSubscription {
+  status: string | null
+  planCode: string | null
+  periodEnd: string | null
+  payUrl: string | null
+  accessAllowed: boolean
+}
+
+export interface OrganizationSummary {
+  id: string
+  name: string
+  slug: string
+  industry: string | null
+  status: string
+  billingOwnerEmail: string | null
+  billingOwnerName: string | null
+  directPayBusinessId: string | null
+  directPaySlug: string | null
+  userCount: number
+  subscription: OrganizationSubscription & { syncedAt: string | null }
 }

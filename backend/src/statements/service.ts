@@ -66,11 +66,12 @@ function formatDetail(
   }
 }
 
-async function assertUniqueActiveName(name: string, excludeId?: string) {
+async function assertUniqueActiveName(name: string, organizationId: string, excludeId?: string) {
   const existing = await prisma.statement.findFirst({
     where: {
       name: { equals: name, mode: 'insensitive' },
       deletedAt: null,
+      organizationId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
@@ -95,8 +96,10 @@ export async function listStatements(
   search?: string,
   category?: ReportCategory,
   type?: StatementType,
+  organizationId?: string,
 ): Promise<StatementListItem[]> {
   const where: Prisma.StatementWhereInput = { deletedAt: null }
+  if (organizationId) where.organizationId = organizationId
   if (search?.trim()) {
     const q = search.trim()
     where.OR = [
@@ -206,10 +209,11 @@ export type CreateStatementInput = {
   category?: ReportCategory
   config: StatementConfig
   createdById?: string
+  organizationId: string
 }
 
 export async function createStatement(input: CreateStatementInput): Promise<StatementDetail> {
-  await assertUniqueActiveName(input.name)
+  await assertUniqueActiveName(input.name, input.organizationId)
   await validateReportIds(input.config)
 
   const row = await prisma.statement.create({
@@ -220,6 +224,7 @@ export async function createStatement(input: CreateStatementInput): Promise<Stat
       category: input.category ?? ReportCategory.GENERAL,
       config: input.config as Prisma.InputJsonValue,
       isPublished: false,
+      organizationId: input.organizationId,
       createdById: input.createdById,
       updatedById: input.createdById,
     },
@@ -249,7 +254,7 @@ export async function updateStatement(
   }
 
   if (input.name) {
-    await assertUniqueActiveName(input.name, id)
+    await assertUniqueActiveName(input.name, existing.organizationId, id)
   }
 
   const nextType = input.type ?? existing.type

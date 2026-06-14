@@ -1,8 +1,15 @@
+import { useState } from 'react'
 import { LoadingButton } from '../ui/LoadingButton'
 import type { QueryExecuteResult } from '../../api/reportBuilder'
 import { REPORT_VISUALIZATIONS, type ReportVisualization } from '../../lib/reportConstants'
 import type { ChartPreviewData, PieSlice } from '../../lib/queryResultChart'
 import { formatQueryStatus } from '../../lib/queryResultTable'
+import {
+  hasAnyExportPermission,
+  runWidgetExport,
+  type WidgetExportPermissions,
+} from '../../lib/widgetExport'
+import { StatementExportMenu } from '../statement/StatementExportMenu'
 import { ReportChartPreview } from './ReportChartPreview'
 import { ChartPreviewSkeleton } from './ChartPreviewSkeleton'
 import { QueryResultsTable } from './QueryResultsTable'
@@ -15,6 +22,9 @@ interface ReportBuilderQueryPreviewProps {
   isRunning: boolean
   chartData: ChartPreviewData
   pieData: PieSlice[]
+  reportName?: string
+  showExport?: boolean
+  exportPermissions?: WidgetExportPermissions
 }
 
 export function ReportBuilderQueryPreview({
@@ -25,7 +35,12 @@ export function ReportBuilderQueryPreview({
   isRunning,
   chartData,
   pieData,
+  reportName = 'query-preview',
+  showExport = false,
+  exportPermissions = { png: false, csv: false, pdf: false, xlsx: false },
 }: ReportBuilderQueryPreviewProps) {
+  const [exportError, setExportError] = useState<string | null>(null)
+
   const statusMessage = queryError
     ? queryError
     : queryResult
@@ -44,6 +59,27 @@ export function ReportBuilderQueryPreview({
 
   const showTable = isRunning || (queryResult !== null && queryResult.rows.length > 0)
 
+  const canExport =
+    showExport &&
+    hasAnyExportPermission(exportPermissions) &&
+    !isRunning &&
+    !queryError &&
+    queryResult !== null &&
+    queryResult.rows.length > 0
+
+  const handleExport = async (format: 'csv' | 'pdf' | 'xlsx') => {
+    if (!queryResult) return
+    setExportError(null)
+    try {
+      await runWidgetExport(format, exportPermissions, {
+        result: queryResult,
+        reportName,
+      })
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed')
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-bg-secondary px-3 py-2">
@@ -59,22 +95,39 @@ export function ReportBuilderQueryPreview({
             </span>
           )}
         </div>
-        <div className="flex rounded-md border border-border bg-bg-primary p-0.5">
-          {REPORT_VISUALIZATIONS.map((v) => (
-            <button
-              key={v.value}
-              type="button"
-              title={v.label}
-              onClick={() => onVisualizationChange(v.value)}
-              className={`rounded px-2 py-1 text-sm transition-colors ${
-                visualization === v.value
-                  ? 'bg-brand-blue/15 text-brand-blue'
-                  : 'text-text-secondary hover:bg-bg-secondary hover:text-text-primary'
-              }`}
-            >
-              <i className={`ti ${v.icon}`}></i>
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          {exportError && (
+            <span className="max-w-[12rem] truncate text-[11px] text-semantic-red" title={exportError}>
+              {exportError}
+            </span>
+          )}
+          {canExport && (
+            <StatementExportMenu
+              permissions={{
+                csv: exportPermissions.csv,
+                pdf: exportPermissions.pdf,
+                xlsx: exportPermissions.xlsx,
+              }}
+              onExport={handleExport}
+            />
+          )}
+          <div className="flex rounded-md border border-border bg-bg-primary p-0.5">
+            {REPORT_VISUALIZATIONS.map((v) => (
+              <button
+                key={v.value}
+                type="button"
+                title={v.label}
+                onClick={() => onVisualizationChange(v.value)}
+                className={`rounded px-2 py-1 text-sm transition-colors ${
+                  visualization === v.value
+                    ? 'bg-brand-blue/15 text-brand-blue'
+                    : 'text-text-secondary hover:bg-bg-secondary hover:text-text-primary'
+                }`}
+              >
+                <i className={`ti ${v.icon}`}></i>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

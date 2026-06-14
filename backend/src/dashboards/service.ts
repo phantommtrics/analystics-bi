@@ -74,11 +74,12 @@ function formatDetail(
   }
 }
 
-async function assertUniqueActiveName(name: string, excludeId?: string) {
+async function assertUniqueActiveName(name: string, organizationId: string, excludeId?: string) {
   const existing = await prisma.dashboard.findFirst({
     where: {
       name: { equals: name, mode: 'insensitive' },
       deletedAt: null,
+      organizationId,
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { id: true },
@@ -107,8 +108,12 @@ async function validateReportIds(layout: DashboardLayout) {
   }
 }
 
-export async function listDashboards(search?: string): Promise<DashboardListItem[]> {
+export async function listDashboards(
+  search?: string,
+  organizationId?: string,
+): Promise<DashboardListItem[]> {
   const where: Prisma.DashboardWhereInput = { deletedAt: null }
+  if (organizationId) where.organizationId = organizationId
   if (search?.trim()) {
     const q = search.trim()
     where.OR = [
@@ -129,12 +134,14 @@ export async function listAccessibleDashboards(
   permissions: string[],
   search?: string,
   userType?: UserType,
+  organizationId?: string,
 ): Promise<DashboardListItem[]> {
   if (!hasDashboardParentView(permissions)) {
     return []
   }
 
   const where: Prisma.DashboardWhereInput = { deletedAt: null, isPublished: true }
+  if (organizationId) where.organizationId = organizationId
   if (search?.trim()) {
     const q = search.trim()
     where.OR = [
@@ -212,10 +219,11 @@ export type CreateDashboardInput = {
   showInSidebarMenu?: boolean
   sidebarCategory?: ReportCategory | null
   createdById?: string
+  organizationId: string
 }
 
 export async function createDashboard(input: CreateDashboardInput): Promise<DashboardDetail> {
-  await assertUniqueActiveName(input.name)
+  await assertUniqueActiveName(input.name, input.organizationId)
   const layout = input.layout ?? emptyDashboardLayout()
   await validateReportIds(layout)
 
@@ -232,6 +240,7 @@ export async function createDashboard(input: CreateDashboardInput): Promise<Dash
       showInSidebarMenu: sidebar.showInSidebarMenu,
       sidebarCategory: sidebar.sidebarCategory,
       isPublished: false,
+      organizationId: input.organizationId,
       createdById: input.createdById,
       updatedById: input.createdById,
     },
@@ -261,7 +270,7 @@ export async function updateDashboard(
   }
 
   if (input.name) {
-    await assertUniqueActiveName(input.name, id)
+    await assertUniqueActiveName(input.name, existing.organizationId, id)
   }
 
   if (input.layout) {

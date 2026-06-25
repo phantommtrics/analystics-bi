@@ -90,6 +90,7 @@ export function useReportVariables(sql: string | string[]) {
 
     if (hasDateVariables) {
       if (!dateFiltersEnabled) return undefined
+      if (!dateFilters.dateFrom.trim() || !dateFilters.dateTo.trim()) return undefined
       const datePart = filtersToQueryRecord(dateFilters) ?? {}
       return buildExecuteFilters({ ...datePart, ...custom })
     }
@@ -99,11 +100,14 @@ export function useReportVariables(sql: string | string[]) {
   }, [customVariableDefs, values, hasDateVariables, dateFiltersEnabled, dateFilters])
 
   const filtersReady = useMemo(() => {
-    if (hasDateVariables && !dateFiltersEnabled) return false
+    if (hasDateVariables) {
+      if (!dateFiltersEnabled) return false
+      if (!dateFilters.dateFrom.trim() || !dateFilters.dateTo.trim()) return false
+    }
     return customVariableDefs
       .filter(isRequiredVariable)
       .every((def) => hasFilterValue(values[def.token], def))
-  }, [hasDateVariables, dateFiltersEnabled, customVariableDefs, values])
+  }, [hasDateVariables, dateFiltersEnabled, dateFilters, customVariableDefs, values])
 
   const setVariable = useCallback(
     (name: string, value: string) => {
@@ -190,6 +194,11 @@ export function useReportVariables(sql: string | string[]) {
       { replace: true },
     )
   }, [customVariables, searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (!hasDateVariables || dateFilters.enabled) return
+    setDateFilters(defaultDashboardFilters())
+  }, [hasDateVariables, dateFilters.enabled, setDateFilters])
 
   useEffect(() => {
     if (!hasDateVariables || !dateFiltersEnabled) return

@@ -22,6 +22,11 @@ import {
 } from '../lib/reportConstants'
 import { ReportVariablesPanel } from '../components/report/ReportVariablesPanel'
 import { useReportVariables } from '../hooks/useReportVariables'
+import {
+  buildExecuteFilters,
+  extractSqlVariables,
+  sqlHasDateVariables,
+} from '../lib/sqlVariables'
 import { rowsToChartData, rowsToPieData } from '../lib/queryResultChart'
 import {
   createQueryTab,
@@ -79,6 +84,7 @@ export function ReportBuilder() {
     hasDateVariables,
     dateFilters,
     dateFiltersEnabled,
+    filtersReady,
     setVariable,
     setDateFilters,
   } = useReportVariables(activeTab.sql)
@@ -198,13 +204,33 @@ export function ReportBuilder() {
 
   const runQuery = useCallback(async () => {
     if (!accessToken || !activeTab.dataSourceId || !activeTab.sql.trim()) return
-    if (hasDateVariables && !dateFiltersEnabled) {
+
+    const sqlNeedsDateFilter = sqlHasDateVariables(extractSqlVariables(activeTab.sql))
+    if (sqlNeedsDateFilter && (!dateFiltersEnabled || !dateFilters.dateFrom || !dateFilters.dateTo)) {
       updateActiveTab({
-        queryError: 'Select a date filter before running this query.',
+        queryError:
+          'This query uses date variables (:dateFrom, :dateTo, etc.). Open Variables above the editor and select a date range.',
         queryResult: null,
       })
       return
     }
+    if (!filtersReady) {
+      updateActiveTab({
+        queryError: 'Fill in all required variables before running this query.',
+        queryResult: null,
+      })
+      return
+    }
+
+    const executeFilters =
+      queryFilters ??
+      (sqlNeedsDateFilter
+        ? buildExecuteFilters({
+            dateFrom: dateFilters.dateFrom,
+            dateTo: dateFilters.dateTo,
+          })
+        : {})
+
     setIsRunning(true)
     updateActiveTab({
       queryError: null,
@@ -215,7 +241,7 @@ export function ReportBuilder() {
       const result = await reportBuilderApi.executeQuery(accessToken, {
         dataSourceId: activeTab.dataSourceId,
         sql: activeTab.sql,
-        filters: queryFilters ?? {},
+        filters: executeFilters,
       })
       updateActiveTab({ queryResult: result, queryError: null })
     } catch (err) {
@@ -233,6 +259,8 @@ export function ReportBuilder() {
     queryFilters,
     hasDateVariables,
     dateFiltersEnabled,
+    dateFilters,
+    filtersReady,
     updateActiveTab,
   ])
 

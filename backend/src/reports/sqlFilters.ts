@@ -1,4 +1,5 @@
 import {
+  COLON_TOKEN_TAIL,
   extractSqlVariableDefs,
   getFilterValue,
   hasFilterValue,
@@ -116,7 +117,7 @@ function substituteToken(
   def: SqlVariableDef,
   replacement: string,
 ): string {
-  const colonRe = new RegExp(`(?<!:)${escapeRegExp(':' + def.token)}(?=\\s|,|\\)|;|$|\\]|\\}|\\|)`, 'g')
+  const colonRe = new RegExp(`(?<!:)${escapeRegExp(':' + def.token)}${COLON_TOKEN_TAIL}`, 'g')
   let result = sql.replace(colonRe, replacement)
   result = result.replace(
     new RegExp(`\\{\\{\\s*${escapeRegExp(def.token)}\\s*\\}\\}`, 'g'),
@@ -131,8 +132,10 @@ function substituteToken(
 
 function findUnsubstitutedTokens(sql: string): string[] {
   const found = new Set<string>()
-  const re =
-    /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?(?=\s|,|\)|;|$|\]|\}|\|)/g
+  const re = new RegExp(
+    String.raw`(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?` + COLON_TOKEN_TAIL,
+    'g',
+  )
   let match: RegExpExecArray | null
   while ((match = re.exec(sql)) !== null) {
     const token = match[1] + (match[2] ?? '') + (match[3] ?? '')

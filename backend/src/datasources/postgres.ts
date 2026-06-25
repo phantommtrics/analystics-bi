@@ -92,8 +92,28 @@ export async function testConnection(config: PostgresConnectionConfig): Promise<
 
 const READ_ONLY_SQL_PATTERN = /^\s*(with\b|select\b)/i
 
+/** Skip leading whitespace and SQL comments so `-- note` before SELECT is allowed. */
+function skipLeadingCommentsAndWhitespace(sql: string): string {
+  let i = 0
+  while (i < sql.length) {
+    while (i < sql.length && /\s/.test(sql[i])) i++
+    if (sql.startsWith('--', i)) {
+      const lineEnd = sql.indexOf('\n', i)
+      i = lineEnd === -1 ? sql.length : lineEnd + 1
+      continue
+    }
+    if (sql.startsWith('/*', i)) {
+      const blockEnd = sql.indexOf('*/', i + 2)
+      i = blockEnd === -1 ? sql.length : blockEnd + 2
+      continue
+    }
+    break
+  }
+  return sql.slice(i).trimStart()
+}
+
 export function assertReadOnlySql(sql: string) {
-  const trimmed = sql.trim()
+  const trimmed = skipLeadingCommentsAndWhitespace(sql.trim())
   if (!trimmed) {
     throw new Error('SQL query is empty')
   }

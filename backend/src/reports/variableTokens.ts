@@ -1,8 +1,13 @@
 const PARAM_BASE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
-/** Match :param, :param?, :param[], :param[]? (not PostgreSQL ::cast). */
-const COLON_TOKEN =
-  /(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?(?=\s|,|\)|;|$|\]|\}|\|)/g
+/** Allowed immediately after a :param token (e.g. whitespace or PostgreSQL ::cast). */
+export const COLON_TOKEN_TAIL = String.raw`(?=\s|,|\)|;|$|\]|\}|::|\|)`
+
+/** Match :param, :param?, :param[], :param[]? (not PostgreSQL ::cast on the param itself). */
+const COLON_TOKEN = new RegExp(
+  String.raw`(?<!:):([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?` + COLON_TOKEN_TAIL,
+  'g',
+)
 const MUSTACHE_TOKEN = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?\s*\}\}/g
 const TEMPLATE_TOKEN = /\$\{([a-zA-Z_][a-zA-Z0-9_]*)(\[\])?(\?)?\}/g
 

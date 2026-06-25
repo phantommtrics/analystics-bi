@@ -1,9 +1,29 @@
 import 'dotenv/config'
 import bcrypt from 'bcryptjs'
-import { PrismaClient, UserStatus, UserType } from '@prisma/client'
+import { PrismaClient, SslMode, UserStatus, UserType } from '@prisma/client'
+import { encrypt } from '../src/datasources/crypto.js'
 import { MODULES, actionsForModule } from '../src/auth/permissions.js'
 
 const prisma = new PrismaClient()
+
+function parseDatabaseUrl(url: string) {
+  const parsed = new URL(url)
+  const database = parsed.pathname.replace(/^\//, '').split('?')[0]
+  if (!database) {
+    throw new Error('DATABASE_URL is missing a database name')
+  }
+  return {
+    host: parsed.hostname,
+    port: parsed.port ? Number(parsed.port) : 5432,
+    database,
+    username: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+  }
+}
+
+function sslModeForHost(host: string): SslMode {
+  return host === 'localhost' || host === '127.0.0.1' ? SslMode.DISABLE : SslMode.REQUIRE
+}
 
 async function main() {
   // Remove legacy permission keys from prior seed
@@ -135,6 +155,41 @@ async function main() {
     update: {},
     create: { userId: owner.id, roleId: ownerRole.id },
   })
+
+  const databaseUrl = process.env.DATABASE_URL
+  if (databaseUrl) {
+    try {
+      const conn = parseDatabaseUrl(databaseUrl)
+      await prisma.dataSource.upsert({
+        where: { name: 'APS Wallet (Local)' },
+        update: {
+          host: conn.host,
+          port: conn.port,
+          database: conn.database,
+          username: conn.username,
+          passwordEncrypted: encrypt(conn.password),
+          sslMode: sslModeForHost(conn.host),
+          isActive: true,
+        },
+        create: {
+          name: 'APS Wallet (Local)',
+          host: conn.host,
+          port: conn.port,
+          database: conn.database,
+          username: conn.username,
+          passwordEncrypted: encrypt(conn.password),
+          sslMode: sslModeForHost(conn.host),
+          isActive: true,
+          createdById: owner.id,
+        },
+      })
+    } catch (error) {
+      console.warn(
+        'Skipped default data source seed:',
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
 }
 
 main()

@@ -15,6 +15,7 @@ export const MODULES = [
   'dashboard-builder',
   'statement-builder',
   'schedules',
+  'partner-agent-float',
   'system-config-roles',
   'system-config-groups',
   'system-config-operators',
@@ -45,9 +46,11 @@ const SYSTEM_CONFIG_ACTIONS: readonly ActionKey[] = ['view', 'edit', 'delete']
 
 /** Actions available per module in the roles permission matrix. */
 const SCHEDULES_ACTIONS: readonly ActionKey[] = ['view', 'schedule', 'edit', 'delete']
+const PARTNER_AGENT_FLOAT_ACTIONS: readonly ActionKey[] = ['view', 'edit']
 
 const MODULE_ACTION_OVERRIDES: Partial<Record<ModuleKey, readonly ActionKey[]>> = {
   schedules: SCHEDULES_ACTIONS,
+  'partner-agent-float': PARTNER_AGENT_FLOAT_ACTIONS,
   'system-config-roles': SYSTEM_CONFIG_ACTIONS,
   'system-config-groups': SYSTEM_CONFIG_ACTIONS,
   'system-config-operators': SYSTEM_CONFIG_ACTIONS,

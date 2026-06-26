@@ -79,6 +79,12 @@ enum OrganizationStatus {
   SUSPENDED
 }
 
+enum PartnerAgentFloatDeliveryStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
 model Organization {
   id                      String             @id @default(cuid())
   name                    String
@@ -401,4 +407,19 @@ model StatementSchedule {
   @@index([status, scheduledAt])
   @@index([statementId])
   @@index([groupId])
+}
+
+model PartnerAgentFloatDelivery {
+  id           String                          @id @default(cuid())
+  deliveryId   String                          @unique
+  snapshotAt   DateTime
+  recordCount  Int
+  status       PartnerAgentFloatDeliveryStatus
+  httpStatus   Int?
+  errorMessage String?                         @db.Text
+  durationMs   Int?
+  createdAt    DateTime                        @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
 }

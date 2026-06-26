@@ -18,6 +18,8 @@ import { requireActiveSubscription } from './middleware/requireActiveSubscriptio
 import { startReportScheduleProcessor } from './schedules/processor.js'
 import { startStatementScheduleProcessor } from './schedules/statementProcessor.js'
 import { startSubscriptionReminderProcessor } from './directpay/subscription-reminder-processor.js'
+import { startPartnerAgentFloatProcessor } from './partner-agent-float/processor.js'
+import { partnerAgentFloatRouter } from './routes/partner-agent-float.js'
 import { log } from './utils/logger.js'
 
 const app = express()
@@ -71,6 +73,7 @@ subscriptionProtected.use('/reports', reportsRouter)
 subscriptionProtected.use('/dashboards', dashboardsRouter)
 subscriptionProtected.use('/statements', statementsRouter)
 subscriptionProtected.use('/schedules', schedulesRouter)
+subscriptionProtected.use('/partner-agent-float', partnerAgentFloatRouter)
 subscriptionProtected.use('/audit-logs', auditLogsRouter)
 subscriptionProtected.use('/', protectedRouter)
 
@@ -81,4 +84,5 @@ app.listen(env.PORT, () => {
   startReportScheduleProcessor()
   startStatementScheduleProcessor()
   startSubscriptionReminderProcessor()
+  startPartnerAgentFloatProcessor()
 })

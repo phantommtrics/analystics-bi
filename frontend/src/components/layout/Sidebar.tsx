@@ -37,6 +37,12 @@ const navGroups: {
         path: '/statements',
         moduleKey: 'statements',
       },
+      {
+        label: 'Agent Float Sync',
+        icon: 'ti-cloud-upload',
+        path: '/partner-agent-float',
+        moduleKey: 'partner-agent-float',
+      },
     ],
   },
   {

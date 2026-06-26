@@ -26,6 +26,7 @@ import { ReportBuilder } from './pages/ReportBuilder'
 import { ReportCatalog } from './pages/ReportCatalog'
 import { ReportView } from './pages/ReportView'
 import { Schedules } from './pages/Schedules'
+import { PartnerAgentFloat } from './pages/PartnerAgentFloat'
 import { SystemBalance } from './pages/SystemBalance'
 import { Login } from './pages/Login'
 
@@ -59,6 +60,14 @@ export function App() {
               element={
                 <RequirePermission moduleKey="statements">
                   <StatementCatalog />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="/partner-agent-float"
+              element={
+                <RequirePermission moduleKey="partner-agent-float">
+                  <PartnerAgentFloat />
                 </RequirePermission>
               }
             />

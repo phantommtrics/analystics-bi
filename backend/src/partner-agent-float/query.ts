@@ -1,3 +1,10 @@
+import {
+  PARTNER_FLOAT_SCHEMA_VERSION,
+  organizationToWire,
+  type PartnerFloatOrganizationContext,
+  type PartnerFloatOrganizationWire,
+} from './config.js'
+
 const EMONEY_POUCH_NAME = 'EMoney'
 
 const AGENT_PROFILE_ORDER = `
@@ -61,9 +68,10 @@ export type AgentFloatRow = {
 }
 
 export type AgentFloatSnapshot = {
-  schema_version: 1
+  schema_version: typeof PARTNER_FLOAT_SCHEMA_VERSION
   delivery_id: string
   snapshot_at: string
+  organization: PartnerFloatOrganizationWire
   agents: Array<{
     agent_number: string
     after_balance: string
@@ -94,11 +102,13 @@ export function buildSnapshotPayload(
   deliveryId: string,
   snapshotAt: Date,
   rows: AgentFloatRow[],
+  organization: PartnerFloatOrganizationContext,
 ): AgentFloatSnapshot {
   return {
-    schema_version: 1,
+    schema_version: PARTNER_FLOAT_SCHEMA_VERSION,
     delivery_id: deliveryId,
     snapshot_at: snapshotAt.toISOString(),
+    organization: organizationToWire(organization),
     agents: rows.map((row) => ({
       agent_number: String(row.agent_number),
       after_balance: formatBalance(row.after_balance),

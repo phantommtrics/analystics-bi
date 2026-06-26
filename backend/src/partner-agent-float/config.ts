@@ -1,6 +1,25 @@
-import { env } from '../env.js'
+export const PARTNER_FLOAT_SCHEMA_VERSION = 2 as const
 
-export type PartnerAgentFloatConfig = {
+export type PartnerFloatOrganizationContext = {
+  id: string
+  partnerOrgCode: string
+}
+
+export type PartnerFloatOrganizationWire = {
+  id: string
+  partner_org_code: string
+}
+
+export function organizationToWire(
+  organization: PartnerFloatOrganizationContext,
+): PartnerFloatOrganizationWire {
+  return {
+    id: organization.id,
+    partner_org_code: organization.partnerOrgCode,
+  }
+}
+
+export type PartnerAgentFloatRuntimeConfig = {
   enabled: boolean
   intervalMs: number
   apiUrl: string
@@ -9,26 +28,19 @@ export type PartnerAgentFloatConfig = {
   encryptionKey: string
   requestTimeoutMs: number
   configured: boolean
+  organization: PartnerFloatOrganizationContext
 }
 
-export function getPartnerAgentFloatConfig(): PartnerAgentFloatConfig {
-  const apiUrl = (env.PARTNER_AGENT_FLOAT_API_URL || '').trim().replace(/\/$/, '')
-  const apiKey = (env.PARTNER_AGENT_FLOAT_API_KEY || '').trim()
-  const hmacSecret = (env.PARTNER_AGENT_FLOAT_HMAC_SECRET || '').trim()
-  const encryptionKey = (env.PARTNER_AGENT_FLOAT_ENCRYPTION_KEY || '').trim()
+const PARTNER_ORG_CODE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/
 
-  const configured = Boolean(apiUrl && apiKey && hmacSecret && encryptionKey)
-
-  return {
-    enabled: env.PARTNER_AGENT_FLOAT_ENABLED,
-    intervalMs: env.PARTNER_AGENT_FLOAT_INTERVAL_MS,
-    apiUrl,
-    apiKey,
-    hmacSecret,
-    encryptionKey,
-    requestTimeoutMs: env.PARTNER_AGENT_FLOAT_REQUEST_TIMEOUT_MS,
-    configured,
+export function normalizePartnerOrgCode(code: string): string {
+  const trimmed = code.trim()
+  if (!PARTNER_ORG_CODE_RE.test(trimmed)) {
+    throw new Error(
+      'Partner org code must be 3–64 characters (letters, numbers, hyphens, underscores)',
+    )
   }
+  return trimmed
 }
 
 export function maskApiUrl(url: string): string {

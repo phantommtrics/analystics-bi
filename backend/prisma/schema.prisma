@@ -111,6 +111,8 @@ model Organization {
   savedReports            SavedReport[]
   dashboards              Dashboard[]
   statements              Statement[]
+  partnerAgentFloat       OrganizationPartnerAgentFloat?
+  partnerAgentFloatDeliveries PartnerAgentFloatDelivery[]
   createdAt               DateTime           @default(now())
   updatedAt               DateTime           @updatedAt
 }
@@ -409,17 +411,36 @@ model StatementSchedule {
   @@index([groupId])
 }
 
-model PartnerAgentFloatDelivery {
-  id           String                          @id @default(cuid())
-  deliveryId   String                          @unique
-  snapshotAt   DateTime
-  recordCount  Int
-  status       PartnerAgentFloatDeliveryStatus
-  httpStatus   Int?
-  errorMessage String?                         @db.Text
-  durationMs   Int?
-  createdAt    DateTime                        @default(now())
+model OrganizationPartnerAgentFloat {
+  id                     String       @id @default(cuid())
+  organizationId         String       @unique
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  enabled                Boolean      @default(false)
+  apiUrl                 String?
+  apiKeyEncrypted        String?
+  hmacSecretEncrypted    String?
+  encryptionKeyEncrypted String?
+  partnerOrgCode         String?
+  intervalMs             Int          @default(300000)
+  requestTimeoutMs       Int          @default(30000)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+}
 
+model PartnerAgentFloatDelivery {
+  id             String                          @id @default(cuid())
+  organizationId String
+  organization   Organization                    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveryId     String                          @unique
+  snapshotAt     DateTime
+  recordCount    Int
+  status         PartnerAgentFloatDeliveryStatus
+  httpStatus     Int?
+  errorMessage   String?                         @db.Text
+  durationMs     Int?
+  createdAt      DateTime                        @default(now())
+
+  @@index([organizationId, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@index([status])
 }

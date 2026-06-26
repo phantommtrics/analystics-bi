@@ -9,7 +9,16 @@ import {
   deliverToPartner,
   newDeliveryId,
 } from './client.js'
-import { getPartnerAgentFloatConfig, maskApiUrl } from './config.js'
+import { maskApiUrl } from './config.js'
+import {
+  getOrgPartnerAgentFloatPublicConfig,
+  getOrgPartnerAgentFloatRecord,
+  getOrgPartnerAgentFloatRuntimeConfig,
+  toRuntimeConfig,
+  type PartnerAgentFloatPublicConfig,
+  upsertOrgPartnerAgentFloatConfig,
+  type UpdatePartnerAgentFloatConfigInput,
+} from './orgConfig.js'
 import {
   AGENT_EMONEY_FLOAT_SNAPSHOT_SQL,
   buildSnapshotPayload,
@@ -18,20 +27,23 @@ import {
 
 const ERROR_MAX_LEN = 2000
 
-async function getActiveDataSourceId(): Promise<string> {
+async function getActiveDataSourceIdForOrg(organizationId: string): Promise<string> {
   const ds = await prisma.dataSource.findFirst({
-    where: { isActive: true },
+    where: { organizationId, isActive: true },
     orderBy: { name: 'asc' },
     select: { id: true },
   })
   if (!ds) {
-    throw new Error('No active data source configured')
+    throw new Error('No active data source configured for this organization')
   }
   return ds.id
 }
 
-export async function fetchAgentFloatRows(snapshotAt: Date): Promise<AgentFloatRow[]> {
-  const dataSourceId = await getActiveDataSourceId()
+export async function fetchAgentFloatRows(
+  organizationId: string,
+  snapshotAt: Date,
+): Promise<AgentFloatRow[]> {
+  const dataSourceId = await getActiveDataSourceIdForOrg(organizationId)
   const sql = applySqlFilters(AGENT_EMONEY_FLOAT_SNAPSHOT_SQL, {
     snapshotAt: snapshotAt.toISOString(),
   })
@@ -40,6 +52,7 @@ export async function fetchAgentFloatRows(snapshotAt: Date): Promise<AgentFloatR
 }
 
 export type RunDeliveryOptions = {
+  organizationId: string
   triggeredBy?: string | null
   userLabel?: string
 }
@@ -55,11 +68,14 @@ export type RunDeliveryResult = {
 }
 
 export async function runPartnerAgentFloatDelivery(
-  options: RunDeliveryOptions = {},
+  options: RunDeliveryOptions,
 ): Promise<RunDeliveryResult> {
-  const config = getPartnerAgentFloatConfig()
+  const config = await getOrgPartnerAgentFloatRuntimeConfig(options.organizationId)
+  if (!config) {
+    throw new Error('Partner agent float is not configured for this organization')
+  }
   if (!config.enabled) {
-    throw new Error('Partner agent float sync is disabled')
+    throw new Error('Partner agent float sync is disabled for this organization')
   }
   if (!config.configured) {
     throw new Error('Partner agent float delivery is not fully configured')
@@ -71,6 +87,7 @@ export async function runPartnerAgentFloatDelivery(
 
   const delivery = await prisma.partnerAgentFloatDelivery.create({
     data: {
+      organizationId: options.organizationId,
       deliveryId,
       snapshotAt,
       recordCount: 0,
@@ -79,17 +96,23 @@ export async function runPartnerAgentFloatDelivery(
   })
 
   try {
-    const rows = await fetchAgentFloatRows(snapshotAt)
-    const innerPayload = buildSnapshotPayload(deliveryId, snapshotAt, rows)
+    const rows = await fetchAgentFloatRows(options.organizationId, snapshotAt)
+    const innerPayload = buildSnapshotPayload(
+      deliveryId,
+      snapshotAt,
+      rows,
+      config.organization,
+    )
     const innerJson = JSON.stringify(innerPayload)
     const envelope = buildDeliveryEnvelope(
       deliveryId,
       snapshotAt,
       innerJson,
       config.encryptionKey,
+      config.organization,
     )
 
-    const result = await deliverToPartner(envelope, { deliveryId })
+    const result = await deliverToPartner(envelope, config, { deliveryId })
     const durationMs = Date.now() - started
 
     if (result.ok) {
@@ -110,6 +133,7 @@ export async function runPartnerAgentFloatDelivery(
         action: 'RUN_PARTNER_AGENT_FLOAT',
         resource: deliveryId,
         metadata: {
+          organizationId: options.organizationId,
           recordCount: rows.length,
           httpStatus: result.httpStatus,
           durationMs,
@@ -145,6 +169,7 @@ export async function runPartnerAgentFloatDelivery(
       action: 'RUN_PARTNER_AGENT_FLOAT_FAILED',
       resource: deliveryId,
       metadata: {
+        organizationId: options.organizationId,
         recordCount: rows.length,
         httpStatus: result.httpStatus,
         error: errorMessage,
@@ -183,7 +208,11 @@ export async function runPartnerAgentFloatDelivery(
       userLabel: options.userLabel ?? 'system',
       action: 'RUN_PARTNER_AGENT_FLOAT_FAILED',
       resource: deliveryId,
-      metadata: { error: errorMessage, durationMs },
+      metadata: {
+        organizationId: options.organizationId,
+        error: errorMessage,
+        durationMs,
+      },
     })
 
     return {
@@ -198,16 +227,7 @@ export async function runPartnerAgentFloatDelivery(
   }
 }
 
-export type PartnerAgentFloatStatus = {
-  enabled: boolean
-  configured: boolean
-  intervalMs: number
-  apiUrlMasked: string
-  keysConfigured: {
-    apiKey: boolean
-    hmacSecret: boolean
-    encryptionKey: boolean
-  }
+export type PartnerAgentFloatStatus = PartnerAgentFloatPublicConfig & {
   lastDelivery: {
     deliveryId: string
     snapshotAt: string
@@ -221,29 +241,26 @@ export type PartnerAgentFloatStatus = {
   nextRunAt: string | null
 }
 
-export async function getPartnerAgentFloatStatus(): Promise<PartnerAgentFloatStatus> {
-  const config = getPartnerAgentFloatConfig()
+export async function getPartnerAgentFloatStatus(
+  organizationId: string,
+): Promise<PartnerAgentFloatStatus | null> {
+  const publicConfig = await getOrgPartnerAgentFloatPublicConfig(organizationId)
+  if (!publicConfig) return null
+
   const last = await prisma.partnerAgentFloatDelivery.findFirst({
+    where: { organizationId },
     orderBy: { createdAt: 'desc' },
   })
 
   let nextRunAt: string | null = null
-  if (config.enabled && last) {
-    nextRunAt = new Date(last.createdAt.getTime() + config.intervalMs).toISOString()
-  } else if (config.enabled) {
+  if (publicConfig.enabled && last) {
+    nextRunAt = new Date(last.createdAt.getTime() + publicConfig.intervalMs).toISOString()
+  } else if (publicConfig.enabled) {
     nextRunAt = new Date().toISOString()
   }
 
   return {
-    enabled: config.enabled,
-    configured: config.configured,
-    intervalMs: config.intervalMs,
-    apiUrlMasked: maskApiUrl(config.apiUrl),
-    keysConfigured: {
-      apiKey: Boolean(config.apiKey),
-      hmacSecret: Boolean(config.hmacSecret),
-      encryptionKey: Boolean(config.encryptionKey),
-    },
+    ...publicConfig,
     lastDelivery: last
       ? {
           deliveryId: last.deliveryId,
@@ -273,17 +290,20 @@ export type DeliveryHistoryItem = {
 }
 
 export async function listPartnerAgentFloatDeliveries(
+  organizationId: string,
   page = 1,
   pageSize = 20,
 ): Promise<{ items: DeliveryHistoryItem[]; total: number; page: number; pageSize: number }> {
   const skip = (page - 1) * pageSize
+  const where = { organizationId }
   const [items, total] = await Promise.all([
     prisma.partnerAgentFloatDelivery.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       skip,
       take: pageSize,
     }),
-    prisma.partnerAgentFloatDelivery.count(),
+    prisma.partnerAgentFloatDelivery.count({ where }),
   ])
 
   return {
@@ -304,7 +324,10 @@ export async function listPartnerAgentFloatDeliveries(
   }
 }
 
-export async function previewAgentFloatSnapshot(limit = 50): Promise<{
+export async function previewAgentFloatSnapshot(
+  organizationId: string,
+  limit = 50,
+): Promise<{
   snapshotAt: string
   totalAgents: number
   agents: Array<{
@@ -314,8 +337,25 @@ export async function previewAgentFloatSnapshot(limit = 50): Promise<{
   }>
 }> {
   const snapshotAt = new Date()
-  const rows = await fetchAgentFloatRows(snapshotAt)
-  const payload = buildSnapshotPayload('preview', snapshotAt, rows)
+  const rows = await fetchAgentFloatRows(organizationId, snapshotAt)
+  const record = await getOrgPartnerAgentFloatRecord(organizationId)
+  const org = record?.organization ?? (await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { id: true },
+  }))
+  if (!org) {
+    throw new Error('Organization not found')
+  }
+  const organization = record?.partnerOrgCode?.trim()
+    ? {
+        id: org.id,
+        partnerOrgCode: record.partnerOrgCode.trim(),
+      }
+    : {
+        id: org.id,
+        partnerOrgCode: 'preview',
+      }
+  const payload = buildSnapshotPayload('preview', snapshotAt, rows, organization)
   return {
     snapshotAt: snapshotAt.toISOString(),
     totalAgents: payload.agents.length,
@@ -323,12 +363,25 @@ export async function previewAgentFloatSnapshot(limit = 50): Promise<{
   }
 }
 
-export function logPartnerAgentFloatConfigWarning() {
-  const config = getPartnerAgentFloatConfig()
-  if (config.enabled && !config.configured) {
-    log(
-      'partner-agent-float',
-      'Enabled but missing API URL or secrets — processor will stay idle',
-    )
-  }
+export async function getPartnerAgentFloatConfig(organizationId: string) {
+  return getOrgPartnerAgentFloatPublicConfig(organizationId)
 }
+
+export async function updatePartnerAgentFloatConfig(
+  organizationId: string,
+  input: UpdatePartnerAgentFloatConfigInput,
+) {
+  return upsertOrgPartnerAgentFloatConfig(organizationId, input)
+}
+
+export async function isOrganizationDueForDelivery(organizationId: string, intervalMs: number) {
+  const last = await prisma.partnerAgentFloatDelivery.findFirst({
+    where: { organizationId },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  })
+  if (!last) return true
+  return Date.now() - last.createdAt.getTime() >= intervalMs
+}
+
+export { maskApiUrl, toRuntimeConfig }

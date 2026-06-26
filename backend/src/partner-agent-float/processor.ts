@@ -1,23 +1,18 @@
-import { getPartnerAgentFloatConfig } from './config.js'
-import { runPartnerAgentFloatDelivery, logPartnerAgentFloatConfigWarning } from './service.js'
+import { env } from '../env.js'
+import { listEnabledOrgPartnerConfigs, toRuntimeConfig } from './orgConfig.js'
+import {
+  isOrganizationDueForDelivery,
+  runPartnerAgentFloatDelivery,
+} from './service.js'
 import { log, logError } from '../utils/logger.js'
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let processing = false
 
 export function startPartnerAgentFloatProcessor() {
-  const config = getPartnerAgentFloatConfig()
-  if (!config.enabled) {
-    return
-  }
+  if (pollTimer) return
 
-  logPartnerAgentFloatConfigWarning()
-
-  if (pollTimer) {
-    return
-  }
-
-  const pollMs = config.intervalMs
+  const pollMs = env.PARTNER_AGENT_FLOAT_PROCESSOR_POLL_MS
   void processPartnerAgentFloat()
   pollTimer = setInterval(() => {
     void processPartnerAgentFloat()
@@ -25,7 +20,7 @@ export function startPartnerAgentFloatProcessor() {
 
   const pollLabel =
     pollMs % 60_000 === 0 ? `${pollMs / 60_000} min` : `${Math.round(pollMs / 1000)}s`
-  log('partner-agent-float', `Processor started (every ${pollLabel})`)
+  log('partner-agent-float', `Processor started (check due orgs every ${pollLabel})`)
 }
 
 export function stopPartnerAgentFloatProcessor() {
@@ -36,29 +31,41 @@ export function stopPartnerAgentFloatProcessor() {
 }
 
 export async function processPartnerAgentFloat() {
-  const config = getPartnerAgentFloatConfig()
-  if (!config.enabled || !config.configured) {
-    return
-  }
-  if (processing) {
-    return
-  }
-
+  if (processing) return
   processing = true
+
   try {
-    const result = await runPartnerAgentFloatDelivery({
-      userLabel: 'scheduler',
-    })
-    if (result.status === 'SUCCESS') {
-      log(
-        'partner-agent-float',
-        `Delivered ${result.recordCount} agent(s) in ${result.durationMs}ms (${result.deliveryId})`,
-      )
-    } else {
-      logError(
-        'partner-agent-float',
-        `Delivery failed (${result.deliveryId}): ${result.errorMessage ?? 'unknown error'}`,
-      )
+    const orgConfigs = await listEnabledOrgPartnerConfigs()
+
+    for (const record of orgConfigs) {
+      const config = toRuntimeConfig(record)
+      if (!config.configured) {
+        log(
+          'partner-agent-float',
+          `Org ${record.organization.name} enabled but missing credentials — skipping`,
+        )
+        continue
+      }
+
+      const due = await isOrganizationDueForDelivery(record.organizationId, record.intervalMs)
+      if (!due) continue
+
+      const result = await runPartnerAgentFloatDelivery({
+        organizationId: record.organizationId,
+        userLabel: 'scheduler',
+      })
+
+      if (result.status === 'SUCCESS') {
+        log(
+          'partner-agent-float',
+          `[${record.organization.name}] Delivered ${result.recordCount} agent(s) in ${result.durationMs}ms (${result.deliveryId})`,
+        )
+      } else {
+        logError(
+          'partner-agent-float',
+          `[${record.organization.name}] Delivery failed (${result.deliveryId}): ${result.errorMessage ?? 'unknown error'}`,
+        )
+      }
     }
   } catch (err) {
     logError('partner-agent-float', 'Processor error:', err)

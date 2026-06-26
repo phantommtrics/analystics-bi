@@ -10,6 +10,10 @@ import {
 import { buildDeliveryEnvelope } from './client.js'
 import { buildSnapshotPayload } from './query.js'
 
+const TEST_ORG = {
+  id: 'org-test-id',
+  partnerOrgCode: 'PHANTOM-AGENT-FLOAT',
+}
 const TEST_KEY = randomBytes(32).toString('base64')
 const TEST_HMAC = 'test-hmac-secret-for-partner-float'
 
@@ -22,7 +26,7 @@ describe('partner-agent-float crypto', () => {
   })
 
   it('signs and verifies request body', () => {
-    const body = '{"schema_version":1}'
+    const body = '{"schema_version":2}'
     const signature = signBody(body, TEST_HMAC)
     assert.ok(verifySignature(body, signature, TEST_HMAC))
     assert.equal(verifySignature(body, 'sha256=deadbeef', TEST_HMAC), false)
@@ -37,19 +41,29 @@ describe('partner-agent-float crypto', () => {
 
 describe('partner-agent-float snapshot', () => {
   it('formats balances as decimal strings', () => {
-    const snapshot = buildSnapshotPayload('delivery-1', new Date('2026-06-26T12:00:00.000Z'), [
-      {
-        agent_number: '7957051',
-        after_balance: 12450,
-        balance_as_of: '2026-06-26T11:58:32.000Z',
-      },
-      {
-        agent_number: '2015645',
-        after_balance: '0',
-        balance_as_of: new Date('2026-06-26T12:00:00.000Z'),
-      },
-    ])
+    const snapshot = buildSnapshotPayload(
+      'delivery-1',
+      new Date('2026-06-26T12:00:00.000Z'),
+      [
+        {
+          agent_number: '7957051',
+          after_balance: 12450,
+          balance_as_of: '2026-06-26T11:58:32.000Z',
+        },
+        {
+          agent_number: '2015645',
+          after_balance: '0',
+          balance_as_of: new Date('2026-06-26T12:00:00.000Z'),
+        },
+      ],
+      TEST_ORG,
+    )
 
+    assert.equal(snapshot.schema_version, 2)
+    assert.deepEqual(snapshot.organization, {
+      id: TEST_ORG.id,
+      partner_org_code: TEST_ORG.partnerOrgCode,
+    })
     assert.equal(snapshot.agents[0].after_balance, '12450.00')
     assert.equal(snapshot.agents[1].after_balance, '0.00')
     assert.equal(snapshot.agents.length, 2)
@@ -59,16 +73,25 @@ describe('partner-agent-float snapshot', () => {
 describe('partner-agent-float delivery envelope', () => {
   it('builds envelope with matching record count', () => {
     const inner = JSON.stringify(
-      buildSnapshotPayload('d-1', new Date('2026-06-26T12:00:00.000Z'), [
-        { agent_number: '1', after_balance: 0, balance_as_of: '2026-06-26T12:00:00.000Z' },
-      ]),
+      buildSnapshotPayload(
+        'd-1',
+        new Date('2026-06-26T12:00:00.000Z'),
+        [{ agent_number: '1', after_balance: 0, balance_as_of: '2026-06-26T12:00:00.000Z' }],
+        TEST_ORG,
+      ),
     )
     const envelope = buildDeliveryEnvelope(
       'd-1',
       new Date('2026-06-26T12:00:00.000Z'),
       inner,
       TEST_KEY,
+      TEST_ORG,
     )
+    assert.equal(envelope.schema_version, 2)
+    assert.deepEqual(envelope.organization, {
+      id: TEST_ORG.id,
+      partner_org_code: TEST_ORG.partnerOrgCode,
+    })
     assert.equal(envelope.record_count, 1)
     assert.equal(envelope.algorithm, 'aes-256-gcm')
     assert.ok(envelope.encrypted_payload.length > 0)
@@ -76,17 +99,22 @@ describe('partner-agent-float delivery envelope', () => {
     const decrypted = JSON.parse(decryptPayload(envelope.encrypted_payload, TEST_KEY))
     assert.equal(decrypted.agents.length, 1)
     assert.equal(decrypted.agents[0].agent_number, '1')
+    assert.deepEqual(decrypted.organization, {
+      id: TEST_ORG.id,
+      partner_org_code: TEST_ORG.partnerOrgCode,
+    })
   })
 
   it('signature covers full envelope JSON', () => {
     const inner = JSON.stringify(
-      buildSnapshotPayload('d-2', new Date('2026-06-26T12:00:00.000Z'), []),
+      buildSnapshotPayload('d-2', new Date('2026-06-26T12:00:00.000Z'), [], TEST_ORG),
     )
     const envelope = buildDeliveryEnvelope(
       'd-2',
       new Date('2026-06-26T12:00:00.000Z'),
       inner,
       TEST_KEY,
+      TEST_ORG,
     )
     const rawBody = JSON.stringify(envelope)
     const signature = signBody(rawBody, TEST_HMAC)

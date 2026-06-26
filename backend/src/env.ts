@@ -61,29 +61,13 @@ const envSchema = z.object({
     .min(10_000)
     .max(3_600_000)
     .default(120_000),
-  /** Partner agent float balance sync — master switch */
-  PARTNER_AGENT_FLOAT_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => v === 'true' || v === '1'),
-  /** How often to snapshot and deliver agent float balances (milliseconds) */
-  PARTNER_AGENT_FLOAT_INTERVAL_MS: z.coerce
+  /** How often the processor checks which orgs are due for delivery (milliseconds) */
+  PARTNER_AGENT_FLOAT_PROCESSOR_POLL_MS: z.coerce
     .number()
     .int()
-    .min(60_000)
-    .max(86_400_000)
-    .default(300_000),
-  PARTNER_AGENT_FLOAT_API_URL: z.string().optional(),
-  PARTNER_AGENT_FLOAT_API_KEY: z.string().optional(),
-  PARTNER_AGENT_FLOAT_HMAC_SECRET: z.string().optional(),
-  /** 32-byte key (base64) shared with partner for AES-256-GCM payload encryption */
-  PARTNER_AGENT_FLOAT_ENCRYPTION_KEY: z.string().optional(),
-  PARTNER_AGENT_FLOAT_REQUEST_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .min(5_000)
-    .max(300_000)
-    .default(30_000),
+    .min(10_000)
+    .max(3_600_000)
+    .default(60_000),
 })
 
 export const env = envSchema.parse(process.env)

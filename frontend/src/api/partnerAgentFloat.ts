@@ -1,5 +1,21 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
 
+type OrgQuery = { organizationId?: string }
+
+function orgQuery(params: OrgQuery = {}) {
+  if (!params.organizationId) return ''
+  return `?organizationId=${encodeURIComponent(params.organizationId)}`
+}
+
+function orgSearchParams(params: Record<string, string | undefined>) {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') search.set(key, value)
+  }
+  const qs = search.toString()
+  return qs ? `?${qs}` : ''
+}
+
 async function partnerAgentFloatFetch<T>(
   path: string,
   accessToken: string,
@@ -22,16 +38,31 @@ async function partnerAgentFloatFetch<T>(
 
 export type PartnerAgentFloatDeliveryStatus = 'RUNNING' | 'SUCCESS' | 'FAILED'
 
-export interface PartnerAgentFloatStatus {
+export interface PartnerAgentFloatContext {
+  organizationId: string | null
+  organizations: Array<{ id: string; name: string }>
+  canSelectOrganization: boolean
+}
+
+export interface PartnerAgentFloatConfig {
+  organizationId: string
+  organizationName: string
+  partnerOrgCode: string
+  hasIntegration: boolean
   enabled: boolean
   configured: boolean
   intervalMs: number
+  requestTimeoutMs: number
+  apiUrl: string
   apiUrlMasked: string
   keysConfigured: {
     apiKey: boolean
     hmacSecret: boolean
     encryptionKey: boolean
   }
+}
+
+export interface PartnerAgentFloatStatus extends PartnerAgentFloatConfig {
   lastDelivery: {
     deliveryId: string
     snapshotAt: string
@@ -43,6 +74,17 @@ export interface PartnerAgentFloatStatus {
     createdAt: string
   } | null
   nextRunAt: string | null
+}
+
+export interface UpdatePartnerAgentFloatConfigPayload {
+  enabled?: boolean
+  apiUrl?: string
+  partnerOrgCode?: string
+  intervalMs?: number
+  requestTimeoutMs?: number
+  apiKey?: string
+  hmacSecret?: string
+  encryptionKey?: string
 }
 
 export interface DeliveryHistoryItem {
@@ -85,29 +127,62 @@ export interface PreviewSnapshot {
 }
 
 export const partnerAgentFloatApi = {
-  status(accessToken: string) {
-    return partnerAgentFloatFetch<PartnerAgentFloatStatus>('/status', accessToken)
-  },
-
-  deliveries(accessToken: string, page = 1, pageSize = 20) {
-    const params = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-    })
-    return partnerAgentFloatFetch<DeliveryHistoryResult>(
-      `/deliveries?${params}`,
+  context(accessToken: string, organizationId?: string) {
+    return partnerAgentFloatFetch<PartnerAgentFloatContext>(
+      `/context${orgQuery({ organizationId })}`,
       accessToken,
     )
   },
 
-  preview(accessToken: string, limit = 50) {
-    const params = new URLSearchParams({ limit: String(limit) })
-    return partnerAgentFloatFetch<PreviewSnapshot>(`/preview?${params}`, accessToken)
+  getConfig(accessToken: string, organizationId?: string) {
+    return partnerAgentFloatFetch<PartnerAgentFloatConfig>(
+      `/config${orgQuery({ organizationId })}`,
+      accessToken,
+    )
   },
 
-  run(accessToken: string) {
-    return partnerAgentFloatFetch<RunDeliveryResult>('/run', accessToken, {
-      method: 'POST',
-    })
+  updateConfig(
+    accessToken: string,
+    payload: UpdatePartnerAgentFloatConfigPayload,
+    organizationId?: string,
+  ) {
+    return partnerAgentFloatFetch<PartnerAgentFloatConfig>(
+      `/config${orgQuery({ organizationId })}`,
+      accessToken,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    )
+  },
+
+  status(accessToken: string, organizationId?: string) {
+    return partnerAgentFloatFetch<PartnerAgentFloatStatus>(
+      `/status${orgQuery({ organizationId })}`,
+      accessToken,
+    )
+  },
+
+  deliveries(accessToken: string, page = 1, pageSize = 20, organizationId?: string) {
+    return partnerAgentFloatFetch<DeliveryHistoryResult>(
+      `/deliveries${orgSearchParams({
+        organizationId,
+        page: String(page),
+        pageSize: String(pageSize),
+      })}`,
+      accessToken,
+    )
+  },
+
+  preview(accessToken: string, limit = 50, organizationId?: string) {
+    return partnerAgentFloatFetch<PreviewSnapshot>(
+      `/preview${orgSearchParams({ organizationId, limit: String(limit) })}`,
+      accessToken,
+    )
+  },
+
+  run(accessToken: string, organizationId?: string) {
+    return partnerAgentFloatFetch<RunDeliveryResult>(
+      `/run${orgQuery({ organizationId })}`,
+      accessToken,
+      { method: 'POST' },
+    )
   },
 }

@@ -1,13 +1,20 @@
 import { randomUUID } from 'crypto'
-import { getPartnerAgentFloatConfig } from './config.js'
+import {
+  PARTNER_FLOAT_SCHEMA_VERSION,
+  organizationToWire,
+  type PartnerAgentFloatRuntimeConfig,
+  type PartnerFloatOrganizationContext,
+  type PartnerFloatOrganizationWire,
+} from './config.js'
 import { encryptPayload, signBody } from './crypto.js'
 
 export type DeliveryEnvelope = {
-  schema_version: 1
+  schema_version: typeof PARTNER_FLOAT_SCHEMA_VERSION
   delivery_id: string
   snapshot_at: string
   record_count: number
   algorithm: 'aes-256-gcm'
+  organization: PartnerFloatOrganizationWire
   encrypted_payload: string
 }
 
@@ -24,22 +31,24 @@ export function buildDeliveryEnvelope(
   snapshotAt: Date,
   innerPayloadJson: string,
   encryptionKey: string,
+  organization: PartnerFloatOrganizationContext,
 ): DeliveryEnvelope {
   return {
-    schema_version: 1,
+    schema_version: PARTNER_FLOAT_SCHEMA_VERSION,
     delivery_id: deliveryId,
     snapshot_at: snapshotAt.toISOString(),
     record_count: JSON.parse(innerPayloadJson).agents?.length ?? 0,
     algorithm: 'aes-256-gcm',
+    organization: organizationToWire(organization),
     encrypted_payload: encryptPayload(innerPayloadJson, encryptionKey),
   }
 }
 
 export async function deliverToPartner(
   envelope: DeliveryEnvelope,
+  config: PartnerAgentFloatRuntimeConfig,
   options?: { deliveryId?: string },
 ): Promise<DeliverResult> {
-  const config = getPartnerAgentFloatConfig()
   if (!config.configured) {
     return { ok: false, httpStatus: null, error: 'Partner agent float delivery is not configured' }
   }
@@ -47,6 +56,7 @@ export async function deliverToPartner(
   const rawBody = JSON.stringify(envelope)
   const signature = signBody(rawBody, config.hmacSecret)
   const deliveryId = options?.deliveryId ?? envelope.delivery_id
+  const org = envelope.organization
 
   const maxAttempts = 3
   let lastError = 'Delivery failed'
@@ -63,6 +73,8 @@ export async function deliverToPartner(
           Authorization: `Bearer ${config.apiKey}`,
           'X-BIReports-Delivery-Id': deliveryId,
           'X-BIReports-Signature': signature,
+          'X-BIReports-Organization-Id': org.id,
+          'X-BIReports-Partner-Org-Code': org.partner_org_code,
         },
         body: rawBody,
         signal: controller.signal,

@@ -13,7 +13,7 @@ export function InstallPrompt() {
         </div>
         <div className="min-w-0">
           <h2 className="text-sm font-medium text-text-primary">
-            Install APS Wallet BI
+            Install PrixBI
           </h2>
           <p className="mt-1 text-xs text-text-secondary">
             Add the reports app to your device for a faster standalone

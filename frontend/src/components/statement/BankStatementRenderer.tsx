@@ -4,7 +4,13 @@ import {
   activeCustomColumns,
   formatCustomColumnValue,
 } from '../../lib/statementCustomColumns'
-import { cellNumber, cellString, type BankStatementConfig } from '../../lib/statementConfig'
+import {
+  cellNumber,
+  cellString,
+  cellValue,
+  formatStatementDate,
+  type BankStatementConfig,
+} from '../../lib/statementConfig'
 import { StatementDocument } from './StatementDocument'
 
 interface BankStatementRendererProps {
@@ -124,8 +130,8 @@ export function BankStatementRenderer({
                   key={index}
                   className="border-b border-border transition-colors even:bg-bg-secondary/40 hover:bg-brand-blue/5"
                 >
-                  <td className="whitespace-nowrap px-5 py-3 font-mono text-sm text-text-primary">
-                    {cellString(row, mapping.date)}
+                  <td className="whitespace-nowrap px-5 py-3 text-sm text-text-primary">
+                    {formatStatementDate(cellValue(row, mapping.date))}
                   </td>
                   <td className="px-5 py-3 text-sm text-text-primary">
                     {cellString(row, mapping.description)}

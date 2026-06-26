@@ -58,11 +58,11 @@ export function Login() {
           <section className="login-form-panel flex flex-col justify-center p-8 sm:p-10 lg:p-12">
             <div className="mb-8 lg:hidden">
               <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-gold text-lg font-bold text-brand-navy">
-                  A
+                <div className="flex h-9 min-w-9 items-center justify-center rounded-lg bg-brand-gold px-1.5 text-sm font-bold text-brand-navy">
+                  Px
                 </div>
                 <span className="font-medium text-text-primary">
-                  APS Wallet BI
+                  PrixBI
                 </span>
               </div>
             </div>

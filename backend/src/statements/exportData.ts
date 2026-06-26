@@ -11,6 +11,7 @@ import {
 import {
   activeCustomStatementColumns,
   formatCustomStatementCell,
+  formatStatementDate,
   type CustomStatementColumnDef,
 } from './columnFormat.js'
 
@@ -31,7 +32,7 @@ function cellString(row: Record<string, unknown>, column?: string): string {
 
 function cellNumber(row: Record<string, unknown>, column?: string): number | undefined {
   if (!column) return undefined
-  const value = row[column]
+  const value = getRowCell(row, column)
   if (value === null || value === undefined || value === '') return undefined
   const num = Number(value)
   return Number.isFinite(num) ? num : undefined
@@ -40,6 +41,16 @@ function cellNumber(row: Record<string, unknown>, column?: string): number | und
 function formatAmount(value: number | undefined): string {
   if (value === undefined) return ''
   return value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function emptyExportRow(columns: string[]): Record<string, string> {
+  return Object.fromEntries(columns.map((column) => [column, '']))
+}
+
+function metadataExportRow(columns: string[], description: string): Record<string, string> {
+  const row = emptyExportRow(columns)
+  row.Description = description
+  return row
 }
 
 function formatVariance(value: number | undefined): string {
@@ -113,7 +124,7 @@ export function statementToExportResult(
 
       const exportRows = rows.map((row) => {
         const out: Record<string, string> = {
-          Date: cellString(row, mapping.date),
+          Date: formatStatementDate(getRowCell(row, mapping.date)),
           Description: cellString(row, mapping.description),
         }
         if (mapping.reference) out.Reference = cellString(row, mapping.reference)
@@ -129,10 +140,9 @@ export function statementToExportResult(
       if (headerData?.rows?.[0]) {
         const header = headerData.rows[0]
         for (const [key, value] of Object.entries(header)) {
-          exportRows.unshift({
-            Date: '',
-            Description: `${key}: ${String(value ?? '')}`,
-          })
+          exportRows.unshift(
+            metadataExportRow(columns, `${key}: ${String(value ?? '')}`),
+          )
         }
       }
 

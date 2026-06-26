@@ -1,0 +1,135 @@
+UNLINK BILLPAYMENT CUSTOMERS TO NAWEC MERCHANT Account
+
+WITH
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+
+customer_profiles AS (
+  SELECT DISTINCT ON (cu.mobile)
+    cu.mobile,
+    TRIM(CONCAT_WS(' ', cu.firstname, cu.lastname)) AS name_parts,
+    COALESCE(
+    NULLIF(TRIM(cu.full_name), ''),
+    NULLIF(TRIM(CONCAT_WS(' ', cu.firstname, cu.lastname)), '')
+    ) AS customer_name
+  FROM customer_users cu
+  WHERE cu.deleted_at IS NULL
+    AND cu.mobile IS NOT NULL
+  ORDER BY cu.mobile, cu.id DESC
+),
+
+billpay_current AS (
+  SELECT
+    b.user_identifier AS customer_mobile,
+    COUNT(*)::int AS current_txn_count,
+    SUM(b.transaction_amount::numeric) AS current_total_amount,
+    AVG(b.transaction_amount::numeric) AS current_avg_amount
+  FROM transactions b
+  JOIN entities_deduped e ON e.id = b.entity_id
+  JOIN services_deduped s ON s.id = b.service_id
+  CROSS JOIN period_bounds pb
+  WHERE b.deleted_at IS NULL
+    AND b.status = 'SUCCESS'
+    AND e.entity_category = 'CUSTOMER'
+    AND b.transaction_type = 'DR'
+    AND s.name = 'Bill Payment'
+    AND b.created_at >= pb.period_start::timestamp
+    AND b.created_at < CAST(:dateToExclusive AS timestamp)
+  GROUP BY b.user_identifier
+),
+
+billpay_previous AS (
+  SELECT
+    b.user_identifier AS customer_mobile,
+    COUNT(*)::int AS previous_txn_count,
+    SUM(b.transaction_amount::numeric) AS previous_total_amount,
+    AVG(b.transaction_amount::numeric) AS previous_avg_amount
+  FROM transactions b
+  JOIN entities_deduped e ON e.id = b.entity_id
+  JOIN services_deduped s ON s.id = b.service_id
+  CROSS JOIN period_bounds pb
+  WHERE b.deleted_at IS NULL
+    AND b.status = 'SUCCESS'
+    AND e.entity_category = 'CUSTOMER'
+    AND b.transaction_type = 'DR'
+    AND s.name = 'Bill Payment'
+    AND b.created_at >= pb.previous_period_start::timestamp
+    AND b.created_at < pb.period_start::timestamp
+  GROUP BY b.user_identifier
+),
+
+nawec_aps_customers AS (
+  SELECT DISTINCT c.user_identifier AS customer_mobile
+  FROM transactions c
+  JOIN entities_deduped ce ON ce.id = c.entity_id
+  JOIN products_deduped p ON p.id = c.product_id
+  JOIN transactions m
+    ON m.transaction_id = c.transaction_id
+   AND m.id <> c.id
+   AND m.deleted_at IS NULL
+  CROSS JOIN period_bounds pb
+  WHERE c.deleted_at IS NULL
+    AND c.status = 'SUCCESS'
+    AND ce.entity_category = 'CUSTOMER'
+    AND c.transaction_type = 'DR'
+    AND p.name = 'APS PAY'
+    AND m.user_identifier = '7957051'
+    AND m.transaction_type = 'CR'
+    AND c.created_at >= pb.previous_period_start::timestamp
+    AND c.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+eligible_customers AS (
+  SELECT customer_mobile FROM billpay_current
+  UNION
+  SELECT customer_mobile FROM billpay_previous
+)
+
+SELECT
+  ec.customer_mobile,
+  cp.customer_name,
+  COALESCE(bp.previous_txn_count, 0) AS previous_txn_count,
+  COALESCE(bp.previous_total_amount, 0) AS previous_total_amount,
+  ROUND(COALESCE(bp.previous_avg_amount, 0)::numeric, 2) AS previous_avg_amount,
+  COALESCE(bc.current_txn_count, 0) AS current_txn_count,
+  COALESCE(bc.current_total_amount, 0) AS current_total_amount,
+  ROUND(COALESCE(bc.current_avg_amount, 0)::numeric, 2) AS current_avg_amount
+FROM eligible_customers ec
+LEFT JOIN customer_profiles cp ON cp.mobile = ec.customer_mobile
+LEFT JOIN billpay_previous bp ON bp.customer_mobile = ec.customer_mobile
+LEFT JOIN billpay_current bc ON bc.customer_mobile = ec.customer_mobile
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM nawec_aps_customers nx
+  WHERE nx.customer_mobile = ec.customer_mobile
+)
+ORDER BY current_total_amount DESC, previous_total_amount DESC, ec.customer_mobile;

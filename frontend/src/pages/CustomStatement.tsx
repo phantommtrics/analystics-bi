@@ -13,7 +13,8 @@ import { formatQueryFiltersLabel } from '../lib/dashboardFilters'
 import { statementToExportResult } from '../lib/statementExport'
 import {
   buildStatementExportPermissions,
-  downloadBlob,
+  exportQueryResultToCsv,
+  exportQueryResultToPdf,
   exportQueryResultToXlsx,
   hasAnyExportPermission,
   sanitizeExportFilename,
@@ -105,21 +106,7 @@ export function CustomStatement() {
 
   const handleExport = useCallback(
     async (format: 'csv' | 'pdf' | 'xlsx') => {
-      if (!accessToken || !id || !statement || !data) return
-
-      if (format === 'pdf' || format === 'csv') {
-        const { blob, filename } = await statementsApi.export(
-          accessToken,
-          id,
-          format,
-          {
-            filters: effectiveQueryFilters,
-            filterLabel: filterLabel || undefined,
-          },
-        )
-        downloadBlob(blob, filename)
-        return
-      }
+      if (!statement || !data) return
 
       const exportResult = statementToExportResult(
         statement.type,
@@ -132,20 +119,18 @@ export function CustomStatement() {
         reportName: statement.config.headerTitle ?? statement.name,
         ...exportContext,
       }
-      if (format === 'xlsx') {
-        await exportQueryResultToXlsx(exportResult, filename)
+
+      if (format === 'csv') {
+        exportQueryResultToCsv(exportResult, filename)
+        return
       }
+      if (format === 'pdf') {
+        await exportQueryResultToPdf(exportResult, filename, meta)
+        return
+      }
+      await exportQueryResultToXlsx(exportResult, filename)
     },
-    [
-      accessToken,
-      id,
-      statement,
-      data,
-      headerData,
-      effectiveQueryFilters,
-      filterLabel,
-      exportContext,
-    ],
+    [statement, data, headerData, exportContext],
   )
 
   if (!id) {

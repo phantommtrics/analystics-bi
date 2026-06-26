@@ -1,77 +1,3 @@
-BI Reports — Recovered Report SQL Export
-Generated: 2026-06-14T21:40:21.663Z
-
-INCIDENT SUMMARY
-- SavedReport rows in database now: 0
-- Unique report IDs found in audit logs: 53
-- SQL recovered from validation scripts: 17
-
-ROOT CAUSE
-Migration 20260613140000_remove_default_org deleted Organization "default-org".
-SavedReport, DataSource, Dashboard, and Statement rows were CASCADE-deleted because
-they referenced that organization. Audit logs record report IDs and actions but not SQL.
-
-RECOVERY NOTES
-- The SQL below comes from backend/scripts/validate-*.ts (known report definitions).
-- Up to 36 additional custom reports existed in the app but their SQL was not logged.
-- To fully restore, re-create the data source, assign users to the organization,
-  then re-seed with: npx tsx scripts/validate-*-reports.ts --seed (where supported).
-
-LOST REPORT IDS (from audit log, SQL not recoverable from DB)
-- cmpsdhq1z0009x2sl3wedml7l
-- cmpsmb02d0017x25cb0y6btrv
-- cmpzbxqu600gxx2ilo5jpa5os
-- cmq28z04m00thx20jfmz5umrj
-- cmq296rs600w7x20j9zbzr8lz
-- cmq2axuo80111x20j1iii2dds
-- cmq2aw9kt010vx20j9nu7baw3
-- cmq2f25g701g7x20jw6p0jhjw
-- cmq2fj8x801ijx20jvkfgi7vu
-- cmq2g4mrx01kvx20j0habm108
-- cmq2fyb2p01knx20jibk648m2
-- cmq2fqlo401ipx20jslb13p8f
-- cmq2ffe8e01ibx20j2wcwuhdk
-- cmq2csczc0181x20j0b2e1di0
-- cmq2cpzyo017vx20jny4gf0a0
-- cmq2cmjq0017lx20jocp9dvbm
-- cmq2btr0x015dx20j2arb6gz3
-- cmq2bp1x40157x20ji0anlccp
-- cmq29z5nb00yrx20jg7r132uq
-- cmq29k1qh00ylx20j92xbifmw
-- cmq2kftc603nfx20jb8zclr4u
-- cmq2k4vbt03ldx20j8ndhhtga
-- cmq2kjcps03ppx20jrb7jz8e9
-- cmq2klsn603pzx20jn6z2xjqq
-- cmq2knriw03q9x20j4nc1apnr
-- cmq2kqqt803qnx20jd9em9jw5
-- cmq2m1kmw03uvx20jynqax4yy
-- cmq2mbks103xvx20jnhlkqmqy
-- cmq2tsf7106cxx20jkngcdnz2
-- cmq2wl83d06wfx20j1rb37gej
-- cmq2wowb706wrx20jvrlhi58n
-- cmq2xrmr306zfx20jnlwlpkm3
-- cmq2wvpx306x9x20jfcqrn312
-- cmq2wso4t06x3x20j4kcyxg1e
-- cmq3vqn52001vx20qhu1tbq47
-- cmq3vu2s60027x20qgxfzuapn
-- cmq4bj97e00qrx2nvo4gwd99z
-- cmq4bpp1200r7x2nvf2d5rdup
-- cmq9fgobg003nx298xeztx64f
-- cmq9fielc003xx298jehr83mj
-- cmqca3jy701jdx2c6xenver0g
-- cmqccom0h0001x2h243ad0rl3
-- cmqccom120007x2h2286vul46
-- cmqceu46d0001x2nupdjul1is
-- cmqchj47k0001x2jt59b9hexv
-- cmqchj4840007x2jtbeac9oit
-- cmqchj48f000dx2jt8fb7su0d
-- cmqckgawa0001x2dzldghhx3y
-- cmqckgax5000dx2dztzch11p4
-- cmqckgawt0007x2dz21xjjcbl
-- cmqc8sv7y01fbx2c6mxivmzmz
-- cmqc8b5bd01d7x2c64l9gczsm
-- cmqc710dk019dx2c6omia714z
-
 ================================================================================
 REPORT 1: [Revenue] - Summary by stream
 Source: validate-revenue-reports.ts
@@ -3366,3 +3292,2040 @@ WHERE t.deleted_at IS NULL
   [[AND bh.name = :hierarchyName?]]
   [[AND e.name = :entityName?]]
 ORDER BY t.created_at DESC, t.transaction_amount::numeric DESC
+
+================================================================================
+Transaction Detail Report (Any Entity) — Dual Leg with From / To
+
+WITH entities_d AS (
+  SELECT DISTINCT ON (e.id)
+    e.id,
+    e.name,
+    e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+
+services_d AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+
+products_d AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+
+filtered AS (
+  SELECT
+    t.id,
+    t.transaction_id,
+    t.sub_transaction_id,
+    t.transaction_type,
+    t.user_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_amount,
+    t.before_balance::numeric     AS before_balance,
+    t.after_balance::numeric      AS after_balance,
+    t.status,
+    t.service_id,
+    t.product_id,
+    t.created_at,
+    t.remarks
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.transaction_type IN ('DR', 'CR')
+    AND t.status IN (
+      'SUCCESS',
+      'SUCCESS_BUT_GAMING',
+      'SUCCESS_BUT_FLAG',
+      'REVERSED',
+      'ROLLBACK'
+    )
+    AND t.created_at >= CAST(:start_date AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    [[AND t.transaction_id IN (
+      SELECT DISTINCT x.transaction_id
+      FROM transactions x
+      WHERE x.deleted_at IS NULL
+        AND x.user_identifier = :mobile?
+    )]]
+    [[AND t.entity_id IN (
+      SELECT id FROM entities_d WHERE name = :entityName?
+    )]]
+),
+
+dr AS (
+  SELECT
+    f.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY f.transaction_id, f.transaction_amount
+      ORDER BY f.id
+    ) AS pair_rn
+  FROM filtered f
+  WHERE f.transaction_type = 'DR'
+),
+
+cr AS (
+  SELECT
+    f.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY f.transaction_id, f.transaction_amount
+      ORDER BY f.id
+    ) AS pair_rn
+  FROM filtered f
+  WHERE f.transaction_type = 'CR'
+),
+
+pairs AS (
+  SELECT
+    d.id              AS dr_id,
+    c.id              AS cr_id,
+    d.user_identifier AS from_mobile,
+    c.user_identifier AS to_mobile,
+    d.entity_id       AS from_entity_id,
+    c.entity_id       AS to_entity_id
+  FROM dr d
+  INNER JOIN cr c
+    ON c.transaction_id = d.transaction_id
+   AND c.transaction_amount = d.transaction_amount
+   AND c.pair_rn = d.pair_rn
+),
+
+paired_ids AS (
+  SELECT dr_id AS id FROM pairs
+  UNION ALL
+  SELECT cr_id FROM pairs
+),
+
+legs AS (
+  -- Matched DR leg
+  SELECT
+    d.id                          AS leg_row_id,
+    d.transaction_id,
+    d.sub_transaction_id,
+    'DR'::text                    AS leg_type,
+    d.user_id,
+    d.user_identifier             AS leg_mobile,
+    d.entity_id,
+    d.transaction_amount,
+    d.before_balance,
+    d.after_balance,
+    d.status,
+    d.service_id,
+    d.product_id,
+    d.created_at                  AS transaction_datetime,
+    d.remarks,
+    p.from_mobile,
+    p.to_mobile,
+    p.from_entity_id,
+    p.to_entity_id
+  FROM pairs p
+  INNER JOIN dr d ON d.id = p.dr_id
+
+  UNION ALL
+
+  -- Matched CR leg
+  SELECT
+    c.id,
+    c.transaction_id,
+    c.sub_transaction_id,
+    'CR',
+    c.user_id,
+    c.user_identifier,
+    c.entity_id,
+    c.transaction_amount,
+    c.before_balance,
+    c.after_balance,
+    c.status,
+    c.service_id,
+    c.product_id,
+    c.created_at,
+    c.remarks,
+    p.from_mobile,
+    p.to_mobile,
+    p.from_entity_id,
+    p.to_entity_id
+  FROM pairs p
+  INNER JOIN cr c ON c.id = p.cr_id
+
+  UNION ALL
+
+  -- Unpaired single legs (fees, reversals, etc.)
+  SELECT
+    f.id,
+    f.transaction_id,
+    f.sub_transaction_id,
+    f.transaction_type,
+    f.user_id,
+    f.user_identifier,
+    f.entity_id,
+    f.transaction_amount,
+    f.before_balance,
+    f.after_balance,
+    f.status,
+    f.service_id,
+    f.product_id,
+    f.created_at,
+    f.remarks,
+    CASE WHEN f.transaction_type = 'DR' THEN f.user_identifier END,
+    CASE WHEN f.transaction_type = 'CR' THEN f.user_identifier END,
+    CASE WHEN f.transaction_type = 'DR' THEN f.entity_id END,
+    CASE WHEN f.transaction_type = 'CR' THEN f.entity_id END
+  FROM filtered f
+  WHERE NOT EXISTS (
+    SELECT 1 FROM paired_ids pi WHERE pi.id = f.id
+  )
+),
+
+statement_legs AS (
+  SELECT l.*
+  FROM legs l
+  [[WHERE l.leg_mobile = :mobile?]]
+),
+
+relevant_mobiles AS (
+  SELECT leg_mobile AS mobile FROM statement_legs
+  UNION
+  SELECT from_mobile FROM statement_legs WHERE from_mobile IS NOT NULL
+  UNION
+  SELECT to_mobile   FROM statement_legs WHERE to_mobile IS NOT NULL
+),
+
+profile_hits AS (
+  SELECT DISTINCT ON (src.mobile)
+    src.mobile,
+    src.profile_type,
+    src.firstname,
+    src.lastname,
+    src.full_name,
+    src.profile_name
+  FROM (
+    SELECT
+      'customer' AS profile_type,
+      cu.mobile,
+      cu.firstname,
+      cu.lastname,
+      cu.full_name,
+      COALESCE(
+        cu.full_name,
+        NULLIF(TRIM(COALESCE(cu.firstname, '') || ' ' || COALESCE(cu.lastname, '')), '')
+      ) AS profile_name
+    FROM customer_users cu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = cu.mobile
+    WHERE cu.deleted_at IS NULL
+
+    UNION ALL
+
+    SELECT
+      'agent',
+      au.mobile,
+      au.firstname,
+      au.lastname,
+      au.full_name,
+      COALESCE(
+        au.full_name,
+        NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+      )
+    FROM agent_users au
+    INNER JOIN relevant_mobiles rm ON rm.mobile = au.mobile
+    WHERE au.deleted_at IS NULL
+
+    UNION ALL
+
+    SELECT
+      'merchant',
+      mu.mobile,
+      mu.firstname,
+      mu.lastname,
+      mu.full_name,
+      COALESCE(
+        mu.full_name,
+        NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), '')
+      )
+    FROM merchant_users mu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = mu.mobile
+    WHERE mu.deleted_at IS NULL
+
+    UNION ALL
+
+    SELECT
+      'enterprise',
+      eu.mobile,
+      eu.firstname,
+      eu.lastname,
+      eu.full_name,
+      COALESCE(
+        eu.full_name,
+        NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), '')
+      )
+    FROM enterprise_users eu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = eu.mobile
+    WHERE eu.deleted_at IS NULL
+
+    UNION ALL
+
+    SELECT
+      'vendor',
+      vu.mobile,
+      vu.firstname,
+      vu.lastname,
+      vu.full_name,
+      COALESCE(
+        vu.full_name,
+        NULLIF(TRIM(COALESCE(vu.firstname, '') || ' ' || COALESCE(vu.lastname, '')), '')
+      )
+    FROM vendor_users vu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = vu.mobile
+    WHERE vu.deleted_at IS NULL
+
+    UNION ALL
+
+    SELECT
+      'operational',
+      ou.mobile,
+      ou.firstname,
+      ou.lastname,
+      ou.full_name,
+      COALESCE(
+        ou.full_name,
+        NULLIF(TRIM(COALESCE(ou.firstname, '') || ' ' || COALESCE(ou.lastname, '')), '')
+      )
+    FROM operational_users ou
+    INNER JOIN relevant_mobiles rm ON rm.mobile = ou.mobile
+    WHERE ou.deleted_at IS NULL
+  ) src
+  ORDER BY
+    src.mobile,
+    CASE src.profile_type
+      WHEN 'customer'    THEN 0
+      WHEN 'agent'       THEN 1
+      WHEN 'merchant'    THEN 2
+      WHEN 'enterprise'  THEN 3
+      WHEN 'vendor'      THEN 4
+      WHEN 'operational' THEN 5
+      ELSE 6
+    END
+)
+
+SELECT
+  l.transaction_id,
+  l.sub_transaction_id,
+  l.leg_type,
+  l.transaction_datetime,
+
+  e.name                         AS entity_name,
+  e.entity_category,
+
+  l.leg_mobile,
+  leg_p.profile_type             AS leg_profile_type,
+  leg_p.firstname                AS leg_firstname,
+  leg_p.lastname                 AS leg_lastname,
+  leg_p.full_name                AS leg_full_name,
+  leg_p.profile_name             AS leg_name,
+
+  l.from_mobile,
+  from_p.profile_type            AS from_profile_type,
+  from_p.firstname               AS from_firstname,
+  from_p.lastname                AS from_lastname,
+  from_p.full_name               AS from_full_name,
+  from_p.profile_name            AS from_name,
+  from_e.name                    AS from_entity_name,
+
+  l.to_mobile,
+  to_p.profile_type              AS to_profile_type,
+  to_p.firstname                 AS to_firstname,
+  to_p.lastname                  AS to_lastname,
+  to_p.full_name                 AS to_full_name,
+  to_p.profile_name              AS to_name,
+  to_e.name                      AS to_entity_name,
+
+  s.name                         AS service_name,
+  p.name                         AS product_name,
+  l.transaction_amount,
+  l.before_balance,
+  l.after_balance,
+  LOWER(l.status)                AS transaction_status,
+  l.remarks
+
+FROM statement_legs l
+INNER JOIN entities_d e  ON e.id  = l.entity_id
+LEFT JOIN entities_d from_e ON from_e.id = l.from_entity_id
+LEFT JOIN entities_d to_e   ON to_e.id   = l.to_entity_id
+LEFT JOIN services_d s     ON s.id  = l.service_id
+LEFT JOIN products_d p     ON p.id  = l.product_id
+LEFT JOIN profile_hits leg_p  ON leg_p.mobile  = l.leg_mobile
+LEFT JOIN profile_hits from_p ON from_p.mobile = l.from_mobile
+LEFT JOIN profile_hits to_p   ON to_p.mobile   = l.to_mobile
+
+ORDER BY
+  l.transaction_datetime DESC,
+  l.transaction_id,
+  l.leg_type,
+  l.leg_row_id
+
+
+=========================================================================================
+Agent Transaction Detail Report
+
+WITH agent_by_user_id AS (
+  SELECT DISTINCT ON (au.user_id)
+    au.user_id,
+    au.mobile,
+    au.firstname,
+    au.lastname,
+    au.full_name,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS agent_name
+  FROM agent_users au
+  WHERE au.deleted_at IS NULL
+    AND au.user_id IS NOT NULL
+  ORDER BY au.user_id, au.id DESC
+),
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.user_id,
+    au.mobile,
+    au.firstname,
+    au.lastname,
+    au.full_name,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS agent_name
+  FROM agent_users au
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+)
+
+SELECT
+  t.user_identifier                                         AS mobile,
+  u.status                                                  AS user_status,
+  COALESCE(apu.firstname,  apm.firstname)                   AS firstname,
+  COALESCE(apu.lastname,   apm.lastname)                    AS lastname,
+  COALESCE(apu.full_name,  apm.full_name)                   AS full_name,
+  COALESCE(apu.agent_name, apm.agent_name)                  AS agent_name,
+  t.created_at                                              AS transaction_datetime,
+  t.transaction_id,
+  t.transaction_type,
+  LOWER(t.status)                                           AS transaction_status,
+  s.name                                                    AS service_name,
+  p.name                                                    AS product_name,
+  t.transaction_amount::numeric                             AS transaction_amount,
+  t.after_balance::numeric                                  AS after_balance
+FROM transactions t
+LEFT JOIN users u
+  ON u.id = t.user_id
+ AND u.deleted_at IS NULL
+LEFT JOIN agent_by_user_id apu
+  ON apu.user_id = t.user_id
+LEFT JOIN agent_by_mobile apm
+  ON apm.mobile = t.user_identifier
+LEFT JOIN services s
+  ON s.id = t.service_id
+LEFT JOIN products p
+  ON p.id = t.product_id
+WHERE t.entity_id = 5
+  AND LOWER(t.status) IN (
+    'success',
+    'success_but_gaming',
+    'success_but_flag',
+    'reversed',
+    'rollback'
+  )
+  AND t.created_at >= CAST(:start_date AS timestamp)
+  AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  [[AND (
+    t.user_identifier = :mobile?
+    OR u.mobile = :mobile?
+    OR apu.mobile = :mobile?
+    OR apm.mobile = :mobile?
+  )]]
+ORDER BY
+  t.created_at DESC,
+  t.transaction_id DESC
+
+
+=================================================================================
+-- Customer Bank Statement — Transaction Detail
+
+WITH customer_by_user_id AS (
+  SELECT DISTINCT ON (cu.user_id)
+    cu.user_id,
+    cu.mobile,
+    cu.firstname,
+    cu.lastname,
+    cu.full_name,
+    COALESCE(
+      cu.full_name,
+      NULLIF(TRIM(COALESCE(cu.firstname, '') || ' ' || COALESCE(cu.lastname, '')), '')
+    ) AS customer_name
+  FROM customer_users cu
+  WHERE cu.deleted_at IS NULL
+    AND cu.user_id IS NOT NULL
+  ORDER BY cu.user_id, cu.id DESC
+),
+customer_by_mobile AS (
+  SELECT DISTINCT ON (cu.mobile)
+    cu.user_id,
+    cu.mobile,
+    cu.firstname,
+    cu.lastname,
+    cu.full_name,
+    COALESCE(
+      cu.full_name,
+      NULLIF(TRIM(COALESCE(cu.firstname, '') || ' ' || COALESCE(cu.lastname, '')), '')
+    ) AS customer_name
+  FROM customer_users cu
+  WHERE cu.deleted_at IS NULL
+    AND cu.mobile IS NOT NULL
+  ORDER BY cu.mobile, cu.id DESC
+)
+
+SELECT
+  t.user_identifier                                         AS mobile,
+  u.status                                                  AS user_status,
+  COALESCE(cpu.firstname,  cpm.firstname)                   AS firstname,
+  COALESCE(cpu.lastname,   cpm.lastname)                    AS lastname,
+  COALESCE(cpu.full_name,  cpm.full_name)                   AS full_name,
+  COALESCE(cpu.customer_name, cpm.customer_name)            AS customer_name,
+
+  t.created_at                                              AS transaction_datetime,
+  t.created_at::date                                        AS transaction_date,
+
+  t.transaction_id,
+  t.transaction_type,
+  LOWER(t.status)                                           AS transaction_status,
+
+  TRIM(BOTH ' ' FROM CONCAT_WS(
+    ' — ',
+    NULLIF(TRIM(s.name), ''),
+    NULLIF(TRIM(p.name), ''),
+    NULLIF(TRIM(t.remarks), '')
+  ))                                                        AS description,
+
+  s.name                                                    AS service_name,
+  p.name                                                    AS product_name,
+  t.remarks,
+
+  -- Bank statement amount columns (one populated per row)
+  CASE WHEN t.transaction_type = 'DR'
+       THEN t.transaction_amount::numeric
+  END                                                       AS debit_amount,
+  CASE WHEN t.transaction_type = 'CR'
+       THEN t.transaction_amount::numeric
+  END                                                       AS credit_amount,
+
+  t.before_balance::numeric                                 AS before_balance,
+  t.after_balance::numeric                                  AS after_balance
+
+FROM transactions t
+LEFT JOIN users u
+  ON u.id = t.user_id
+ AND u.deleted_at IS NULL
+LEFT JOIN customer_by_user_id cpu
+  ON cpu.user_id = t.user_id
+LEFT JOIN customer_by_mobile cpm
+  ON cpm.mobile = t.user_identifier
+LEFT JOIN services s
+  ON s.id = t.service_id
+LEFT JOIN products p
+  ON p.id = t.product_id
+WHERE t.deleted_at IS NULL
+  AND t.entity_id = 14
+  AND t.transaction_type IN ('DR', 'CR')
+  AND t.status IN (
+    'SUCCESS',
+    'SUCCESS_BUT_GAMING',
+    'SUCCESS_BUT_FLAG',
+    'REVERSED',
+    'ROLLBACK'
+  )
+  AND t.created_at >= CAST(:start_date AS timestamp)
+  AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  [[AND (
+    t.user_identifier = :mobile?
+    OR u.mobile = :mobile?
+    OR cpu.mobile = :mobile?
+    OR cpm.mobile = :mobile?
+  )]]
+
+-- Statements read chronologically (oldest first)
+ORDER BY
+  t.created_at ASC,
+  t.id ASC,
+  t.transaction_id ASC
+
+
+=================================================================================
+-- Agent Bank Statement — Transaction Detail
+-- Required filters: start_date, end_date
+-- Optional filter: mobile
+--
+-- Bank statement column mapping:
+--   date        → transaction_date
+--   description → description
+--   reference   → transaction_id
+--   debit       → debit_amount
+--   credit      → credit_amount
+--   balance     → after_balance
+--   (custom)    → transaction_status
+
+WITH agent_by_user_id AS (
+  SELECT DISTINCT ON (au.user_id)
+    au.user_id,
+    au.mobile,
+    au.firstname,
+    au.lastname,
+    au.full_name,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS agent_name
+  FROM agent_users au
+  WHERE au.deleted_at IS NULL
+    AND au.user_id IS NOT NULL
+  ORDER BY au.user_id, au.id DESC
+),
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.user_id,
+    au.mobile,
+    au.firstname,
+    au.lastname,
+    au.full_name,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS agent_name
+  FROM agent_users au
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+)
+
+SELECT
+  t.user_identifier                                         AS mobile,
+  u.status                                                  AS user_status,
+  COALESCE(apu.firstname,  apm.firstname)                   AS firstname,
+  COALESCE(apu.lastname,   apm.lastname)                    AS lastname,
+  COALESCE(apu.full_name,  apm.full_name)                   AS full_name,
+  COALESCE(apu.agent_name, apm.agent_name)                  AS agent_name,
+
+  t.created_at                                              AS transaction_datetime,
+  t.created_at::date                                        AS transaction_date,
+
+  t.transaction_id,
+  t.transaction_type                                        AS leg_type,
+  LOWER(t.status)                                           AS transaction_status,
+
+  TRIM(BOTH ' ' FROM CONCAT_WS(
+    ' — ',
+    NULLIF(TRIM(s.name), ''),
+    NULLIF(TRIM(p.name), ''),
+    NULLIF(TRIM(t.remarks), '')
+  ))                                                        AS description,
+
+  s.name                                                    AS service_name,
+  p.name                                                    AS product_name,
+  t.remarks,
+
+  CASE WHEN t.transaction_type = 'DR'
+       THEN t.transaction_amount::numeric
+  END                                                       AS debit_amount,
+  CASE WHEN t.transaction_type = 'CR'
+       THEN t.transaction_amount::numeric
+  END                                                       AS credit_amount,
+
+  t.before_balance::numeric                                 AS before_balance,
+  t.after_balance::numeric                                  AS after_balance
+
+FROM transactions t
+LEFT JOIN users u
+  ON u.id = t.user_id
+ AND u.deleted_at IS NULL
+LEFT JOIN agent_by_user_id apu
+  ON apu.user_id = t.user_id
+LEFT JOIN agent_by_mobile apm
+  ON apm.mobile = t.user_identifier
+LEFT JOIN services s
+  ON s.id = t.service_id
+LEFT JOIN products p
+  ON p.id = t.product_id
+WHERE t.deleted_at IS NULL
+  AND t.entity_id = 5
+  AND t.transaction_type IN ('DR', 'CR')
+  AND t.status IN (
+    'SUCCESS',
+    'SUCCESS_BUT_GAMING',
+    'SUCCESS_BUT_FLAG',
+    'REVERSED',
+    'ROLLBACK'
+  )
+  AND t.created_at >= CAST(:start_date AS timestamp)
+  AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  [[AND (
+    t.user_identifier = :mobile?
+    OR u.mobile = :mobile?
+    OR apu.mobile = :mobile?
+    OR apm.mobile = :mobile?
+  )]]
+
+ORDER BY
+  t.created_at ASC,
+  t.id ASC,
+  t.transaction_id ASC
+
+
+=================================================================================
+-- Bank Statement — Any Entity (Dual Leg, DR / CR columns)
+-- Required filters: start_date, end_date
+-- Optional filters: mobile, entityName
+--
+-- Mobile filter scopes transactions (transaction_id) so counterparty legs remain
+-- available for pairing/from-to metadata. statement_legs restricts output rows to
+-- the filtered account so before/after balances stay on the correct ledger.
+--
+-- Bank statement column mapping:
+--   date        → transaction_date
+--   description → description
+--   reference   → transaction_id
+--   debit       → debit_amount
+--   credit      → credit_amount
+--   balance     → after_balance
+--   (custom)    → transaction_status, entity_name, from_name, to_name
+
+WITH entities_d AS (
+  SELECT DISTINCT ON (e.id)
+    e.id,
+    e.name,
+    e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_d AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_d AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+filtered AS (
+  SELECT
+    t.id,
+    t.transaction_id,
+    t.sub_transaction_id,
+    t.transaction_type,
+    t.user_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_amount,
+    t.before_balance::numeric     AS before_balance,
+    t.after_balance::numeric      AS after_balance,
+    t.status,
+    t.service_id,
+    t.product_id,
+    t.created_at,
+    t.remarks
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.transaction_type IN ('DR', 'CR')
+    AND t.status IN (
+      'SUCCESS',
+      'SUCCESS_BUT_GAMING',
+      'SUCCESS_BUT_FLAG',
+      'REVERSED',
+      'ROLLBACK'
+    )
+    AND t.created_at >= CAST(:start_date AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    [[AND t.transaction_id IN (
+      SELECT DISTINCT x.transaction_id
+      FROM transactions x
+      WHERE x.deleted_at IS NULL
+        AND x.user_identifier = :mobile?
+    )]]
+    [[AND t.entity_id IN (
+      SELECT id FROM entities_d WHERE name = :entityName?
+    )]]
+),
+dr AS (
+  SELECT
+    f.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY f.transaction_id, f.transaction_amount
+      ORDER BY f.id
+    ) AS pair_rn
+  FROM filtered f
+  WHERE f.transaction_type = 'DR'
+),
+cr AS (
+  SELECT
+    f.*,
+    ROW_NUMBER() OVER (
+      PARTITION BY f.transaction_id, f.transaction_amount
+      ORDER BY f.id
+    ) AS pair_rn
+  FROM filtered f
+  WHERE f.transaction_type = 'CR'
+),
+pairs AS (
+  SELECT
+    d.id              AS dr_id,
+    c.id              AS cr_id,
+    d.user_identifier AS from_mobile,
+    c.user_identifier AS to_mobile,
+    d.entity_id       AS from_entity_id,
+    c.entity_id       AS to_entity_id
+  FROM dr d
+  INNER JOIN cr c
+    ON c.transaction_id = d.transaction_id
+   AND c.transaction_amount = d.transaction_amount
+   AND c.pair_rn = d.pair_rn
+),
+paired_ids AS (
+  SELECT dr_id AS id FROM pairs
+  UNION ALL
+  SELECT cr_id FROM pairs
+),
+legs AS (
+  SELECT
+    d.id AS leg_row_id,
+    d.transaction_id,
+    d.sub_transaction_id,
+    'DR'::text AS leg_type,
+    d.user_id,
+    d.user_identifier AS leg_mobile,
+    d.entity_id,
+    d.transaction_amount,
+    d.before_balance,
+    d.after_balance,
+    d.status,
+    d.service_id,
+    d.product_id,
+    d.created_at AS transaction_datetime,
+    d.remarks,
+    p.from_mobile,
+    p.to_mobile,
+    p.from_entity_id,
+    p.to_entity_id
+  FROM pairs p
+  INNER JOIN dr d ON d.id = p.dr_id
+
+  UNION ALL
+
+  SELECT
+    c.id,
+    c.transaction_id,
+    c.sub_transaction_id,
+    'CR',
+    c.user_id,
+    c.user_identifier,
+    c.entity_id,
+    c.transaction_amount,
+    c.before_balance,
+    c.after_balance,
+    c.status,
+    c.service_id,
+    c.product_id,
+    c.created_at,
+    c.remarks,
+    p.from_mobile,
+    p.to_mobile,
+    p.from_entity_id,
+    p.to_entity_id
+  FROM pairs p
+  INNER JOIN cr c ON c.id = p.cr_id
+
+  UNION ALL
+
+  SELECT
+    f.id,
+    f.transaction_id,
+    f.sub_transaction_id,
+    f.transaction_type,
+    f.user_id,
+    f.user_identifier,
+    f.entity_id,
+    f.transaction_amount,
+    f.before_balance,
+    f.after_balance,
+    f.status,
+    f.service_id,
+    f.product_id,
+    f.created_at,
+    f.remarks,
+    CASE WHEN f.transaction_type = 'DR' THEN f.user_identifier END,
+    CASE WHEN f.transaction_type = 'CR' THEN f.user_identifier END,
+    CASE WHEN f.transaction_type = 'DR' THEN f.entity_id END,
+    CASE WHEN f.transaction_type = 'CR' THEN f.entity_id END
+  FROM filtered f
+  WHERE NOT EXISTS (
+    SELECT 1 FROM paired_ids pi WHERE pi.id = f.id
+  )
+),
+statement_legs AS (
+  SELECT l.*
+  FROM legs l
+  [[WHERE l.leg_mobile = :mobile?]]
+),
+relevant_mobiles AS (
+  SELECT leg_mobile AS mobile FROM statement_legs
+  UNION
+  SELECT from_mobile FROM statement_legs WHERE from_mobile IS NOT NULL
+  UNION
+  SELECT to_mobile FROM statement_legs WHERE to_mobile IS NOT NULL
+),
+profile_hits AS (
+  SELECT DISTINCT ON (src.mobile)
+    src.mobile,
+    src.profile_type,
+    src.firstname,
+    src.lastname,
+    src.full_name,
+    src.profile_name
+  FROM (
+    SELECT 'customer' AS profile_type, cu.mobile, cu.firstname, cu.lastname, cu.full_name,
+      COALESCE(cu.full_name, NULLIF(TRIM(COALESCE(cu.firstname, '') || ' ' || COALESCE(cu.lastname, '')), '')) AS profile_name
+    FROM customer_users cu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = cu.mobile
+    WHERE cu.deleted_at IS NULL
+    UNION ALL
+    SELECT 'agent', au.mobile, au.firstname, au.lastname, au.full_name,
+      COALESCE(au.full_name, NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), ''))
+    FROM agent_users au
+    INNER JOIN relevant_mobiles rm ON rm.mobile = au.mobile
+    WHERE au.deleted_at IS NULL
+    UNION ALL
+    SELECT 'merchant', mu.mobile, mu.firstname, mu.lastname, mu.full_name,
+      COALESCE(mu.full_name, NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), ''))
+    FROM merchant_users mu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = mu.mobile
+    WHERE mu.deleted_at IS NULL
+    UNION ALL
+    SELECT 'enterprise', eu.mobile, eu.firstname, eu.lastname, eu.full_name,
+      COALESCE(eu.full_name, NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), ''))
+    FROM enterprise_users eu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = eu.mobile
+    WHERE eu.deleted_at IS NULL
+    UNION ALL
+    SELECT 'vendor', vu.mobile, vu.firstname, vu.lastname, vu.full_name,
+      COALESCE(vu.full_name, NULLIF(TRIM(COALESCE(vu.firstname, '') || ' ' || COALESCE(vu.lastname, '')), ''))
+    FROM vendor_users vu
+    INNER JOIN relevant_mobiles rm ON rm.mobile = vu.mobile
+    WHERE vu.deleted_at IS NULL
+    UNION ALL
+    SELECT 'operational', ou.mobile, ou.firstname, ou.lastname, ou.full_name,
+      COALESCE(ou.full_name, NULLIF(TRIM(COALESCE(ou.firstname, '') || ' ' || COALESCE(ou.lastname, '')), ''))
+    FROM operational_users ou
+    INNER JOIN relevant_mobiles rm ON rm.mobile = ou.mobile
+    WHERE ou.deleted_at IS NULL
+  ) src
+  ORDER BY
+    src.mobile,
+    CASE src.profile_type
+      WHEN 'customer' THEN 0 WHEN 'agent' THEN 1 WHEN 'merchant' THEN 2
+      WHEN 'enterprise' THEN 3 WHEN 'vendor' THEN 4 WHEN 'operational' THEN 5 ELSE 6
+    END
+)
+
+SELECT
+  l.leg_mobile                                              AS mobile,
+  e.name                                                    AS entity_name,
+  e.entity_category,
+  COALESCE(leg_p.profile_name, l.leg_mobile)                AS account_name,
+
+  l.transaction_datetime,
+  l.transaction_datetime::date                              AS transaction_date,
+
+  l.transaction_id,
+  l.leg_type,
+  LOWER(l.status)                                           AS transaction_status,
+
+  TRIM(BOTH ' ' FROM CONCAT_WS(
+    ' — ',
+    NULLIF(TRIM(s.name), ''),
+    NULLIF(TRIM(p.name), ''),
+    CASE
+      WHEN l.leg_type = 'DR' AND l.to_mobile IS NOT NULL THEN
+        'To ' || COALESCE(to_p.profile_name, l.to_mobile)
+    END,
+    CASE
+      WHEN l.leg_type = 'CR' AND l.from_mobile IS NOT NULL THEN
+        'From ' || COALESCE(from_p.profile_name, l.from_mobile)
+    END,
+    NULLIF(TRIM(l.remarks), '')
+  ))                                                        AS description,
+
+  s.name                                                    AS service_name,
+  p.name                                                    AS product_name,
+  l.remarks,
+
+  l.from_mobile,
+  COALESCE(from_p.profile_name, l.from_mobile)              AS from_name,
+  from_e.name                                               AS from_entity_name,
+
+  l.to_mobile,
+  COALESCE(to_p.profile_name, l.to_mobile)                  AS to_name,
+  to_e.name                                                 AS to_entity_name,
+
+  CASE WHEN l.leg_type = 'DR' THEN l.transaction_amount END AS debit_amount,
+  CASE WHEN l.leg_type = 'CR' THEN l.transaction_amount END AS credit_amount,
+
+  l.before_balance,
+  l.after_balance
+
+FROM statement_legs l
+INNER JOIN entities_d e ON e.id = l.entity_id
+LEFT JOIN entities_d from_e ON from_e.id = l.from_entity_id
+LEFT JOIN entities_d to_e ON to_e.id = l.to_entity_id
+LEFT JOIN services_d s ON s.id = l.service_id
+LEFT JOIN products_d p ON p.id = l.product_id
+LEFT JOIN profile_hits leg_p ON leg_p.mobile = l.leg_mobile
+LEFT JOIN profile_hits from_p ON from_p.mobile = l.from_mobile
+LEFT JOIN profile_hits to_p ON to_p.mobile = l.to_mobile
+
+ORDER BY
+  l.transaction_datetime ASC,
+  l.leg_row_id ASC,
+  l.transaction_id ASC,
+  l.leg_type ASC
+
+================================================================================
+[Hierarchy] - Transaction rollup — period comparison
+Source: validate-hierarchy-rollup-reports.ts
+
+Description: Txn count, volume, and revenue rolled up by business hierarchy across all products and entities. Volume uses deduped SUCCESS transactions on every entity; revenue uses recorded Global Fees credits plus calculated rates (APS PAY 0.8%, Disbursement 0.9%, Airtime 5%, Intouch/Moov 1%). Previous period matches the same length ending the day before dateFrom.
+
+SQL:
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+customer_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_deduped WHERE name = 'Customer' LIMIT 1
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+entity_txn_volumes_current AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  GROUP BY t.transaction_id, e.id
+),
+activity_with_hierarchy_current AS (
+  SELECT
+    etv.transaction_id,
+    etv.entity_id,
+    etv.transaction_volume,
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_current etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_activity_current AS (
+  SELECT
+    hierarchy_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity
+  FROM activity_with_hierarchy_current
+  GROUP BY hierarchy_id
+),
+
+intouch_moov_recorded_products_current AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_current rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines_current AS (
+  SELECT * FROM recorded_fee_lines_current
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_current
+),
+revenue_with_hierarchy_current AS (
+  SELECT
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_current rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_revenue_current AS (
+  SELECT
+    hierarchy_id,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_current
+  GROUP BY hierarchy_id
+),
+
+entity_txn_volumes_previous AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  GROUP BY t.transaction_id, e.id
+),
+activity_with_hierarchy_previous AS (
+  SELECT
+    etv.transaction_id,
+    etv.entity_id,
+    etv.transaction_volume,
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_previous etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_activity_previous AS (
+  SELECT
+    hierarchy_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity
+  FROM activity_with_hierarchy_previous
+  GROUP BY hierarchy_id
+),
+
+intouch_moov_recorded_products_previous AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+recorded_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+calculated_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_previous rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+revenue_lines_previous AS (
+  SELECT * FROM recorded_fee_lines_previous
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_previous
+),
+revenue_with_hierarchy_previous AS (
+  SELECT
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_previous rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_revenue_previous AS (
+  SELECT
+    hierarchy_id,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_previous
+  GROUP BY hierarchy_id
+),
+hierarchy_comparison AS (
+  SELECT
+    ah.hierarchy_id,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev.entities_with_activity, 0) AS previous_entities_with_activity,
+    COALESCE(curr.entities_with_activity, 0) AS current_entities_with_activity,
+    COALESCE(prev_rev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr_rev.revenue_amount, 0) AS current_revenue_amount
+  FROM (
+    SELECT hierarchy_id FROM hierarchy_activity_current
+    UNION
+    SELECT hierarchy_id FROM hierarchy_activity_previous
+    UNION
+    SELECT hierarchy_id FROM hierarchy_revenue_current
+    UNION
+    SELECT hierarchy_id FROM hierarchy_revenue_previous
+  ) ah
+  LEFT JOIN hierarchy_activity_current curr
+    ON curr.hierarchy_id IS NOT DISTINCT FROM ah.hierarchy_id
+  LEFT JOIN hierarchy_activity_previous prev
+    ON prev.hierarchy_id IS NOT DISTINCT FROM ah.hierarchy_id
+  LEFT JOIN hierarchy_revenue_current curr_rev
+    ON curr_rev.hierarchy_id IS NOT DISTINCT FROM ah.hierarchy_id
+  LEFT JOIN hierarchy_revenue_previous prev_rev
+    ON prev_rev.hierarchy_id IS NOT DISTINCT FROM ah.hierarchy_id
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  hc.previous_entities_with_activity,
+  hc.current_entities_with_activity,
+  hc.previous_txn_count,
+  hc.current_txn_count,
+  hc.current_txn_count - hc.previous_txn_count AS txn_count_change,
+  hc.previous_transaction_volume,
+  hc.current_transaction_volume,
+  hc.current_transaction_volume - hc.previous_transaction_volume AS transaction_volume_change,
+  hc.previous_revenue_amount,
+  hc.current_revenue_amount,
+  hc.current_revenue_amount - hc.previous_revenue_amount AS revenue_change
+FROM hierarchy_comparison hc
+CROSS JOIN period_bounds pb
+LEFT JOIN hierarchies_deduped bh ON bh.id = hc.hierarchy_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  hc.current_revenue_amount DESC NULLS LAST,
+  hc.current_transaction_volume DESC NULLS LAST
+
+
+================================================================================
+[Hierarchy] - Products by hierarchy — period comparison
+Source: validate-hierarchy-rollup-reports.ts
+
+Description: Full product list organized by business hierarchy. Each row is one product under a hierarchy with txn count, volume, and revenue for current vs previous period. All products and all entities included.
+
+SQL:
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+customer_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_deduped WHERE name = 'Customer' LIMIT 1
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+entity_txn_volumes_current AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  GROUP BY t.transaction_id, e.id, p.name, p.display_name
+),
+activity_with_hierarchy_current AS (
+  SELECT
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_current etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_product_activity_current AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM activity_with_hierarchy_current
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+intouch_moov_recorded_products_current AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    COALESCE(
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_name,
+    COALESCE(
+      p.display_name,
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_display_name,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    p.name AS product_name,
+    COALESCE(p.display_name, p.name) AS product_display_name,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_current rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines_current AS (
+  SELECT * FROM recorded_fee_lines_current
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_current
+),
+revenue_with_hierarchy_current AS (
+  SELECT
+    rl.product_name,
+    rl.product_display_name,
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_current rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_product_revenue_current AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_current
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+entity_txn_volumes_previous AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  GROUP BY t.transaction_id, e.id, p.name, p.display_name
+),
+activity_with_hierarchy_previous AS (
+  SELECT
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_previous etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_product_activity_previous AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM activity_with_hierarchy_previous
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+intouch_moov_recorded_products_previous AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+recorded_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    COALESCE(
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_name,
+    COALESCE(
+      p.display_name,
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_display_name,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+calculated_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    p.name AS product_name,
+    COALESCE(p.display_name, p.name) AS product_display_name,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_previous rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+revenue_lines_previous AS (
+  SELECT * FROM recorded_fee_lines_previous
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_previous
+),
+revenue_with_hierarchy_previous AS (
+  SELECT
+    rl.product_name,
+    rl.product_display_name,
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_previous rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_product_revenue_previous AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_previous
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+hierarchy_product_keys AS (
+  SELECT hierarchy_id, product_name FROM hierarchy_product_activity_current
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_activity_previous
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_revenue_current
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_revenue_previous
+),
+hierarchy_product_comparison AS (
+  SELECT
+    k.hierarchy_id,
+    k.product_name,
+    COALESCE(
+      curr.product_display_name,
+      prev.product_display_name,
+      curr_rev.product_display_name,
+      prev_rev.product_display_name,
+      k.product_name
+    ) AS product_display_name,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev_rev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr_rev.revenue_amount, 0) AS current_revenue_amount
+  FROM hierarchy_product_keys k
+  LEFT JOIN hierarchy_product_activity_current curr
+    ON curr.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND curr.product_name = k.product_name
+  LEFT JOIN hierarchy_product_activity_previous prev
+    ON prev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND prev.product_name = k.product_name
+  LEFT JOIN hierarchy_product_revenue_current curr_rev
+    ON curr_rev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND curr_rev.product_name = k.product_name
+  LEFT JOIN hierarchy_product_revenue_previous prev_rev
+    ON prev_rev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND prev_rev.product_name = k.product_name
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  hpc.product_name,
+  hpc.product_display_name,
+  hpc.previous_txn_count,
+  hpc.current_txn_count,
+  hpc.current_txn_count - hpc.previous_txn_count AS txn_count_change,
+  hpc.previous_transaction_volume,
+  hpc.current_transaction_volume,
+  hpc.current_transaction_volume - hpc.previous_transaction_volume AS transaction_volume_change,
+  hpc.previous_revenue_amount,
+  hpc.current_revenue_amount,
+  hpc.current_revenue_amount - hpc.previous_revenue_amount AS revenue_change
+FROM hierarchy_product_comparison hpc
+CROSS JOIN period_bounds pb
+LEFT JOIN hierarchies_deduped bh ON bh.id = hpc.hierarchy_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+  [[AND hpc.product_name = :productName?]]
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  hpc.current_revenue_amount DESC NULLS LAST,
+  hpc.current_transaction_volume DESC NULLS LAST,
+  hpc.product_name
+

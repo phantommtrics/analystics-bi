@@ -163,7 +163,7 @@ statementsRouter.get('/:id/export', viewStatements, async (req, res) => {
 
   const filters: Record<string, string> = {}
   for (const [key, value] of Object.entries(req.query)) {
-    if (key === 'format' || typeof value !== 'string') continue
+    if (key === 'format' || key === 'filterLabel' || typeof value !== 'string') continue
     filters[key] = value.slice(0, 500)
   }
 

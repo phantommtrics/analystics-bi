@@ -207,3 +207,35 @@ export function cellString(row: Record<string, unknown>, column?: string): strin
   if (value === null || value === undefined) return ''
   return String(value)
 }
+
+const STATEMENT_DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+}
+
+function formatStatementDateValue(date: Date): string {
+  return date.toLocaleDateString('en-GB', STATEMENT_DATE_FORMAT)
+}
+
+/** Format report date values for bank statement date columns. */
+export function formatStatementDate(value: unknown): string {
+  if (value === null || value === undefined || value === '') return ''
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? '' : formatStatementDateValue(value)
+  }
+
+  const text = String(value).trim()
+  if (!text) return ''
+
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text)
+  if (dateOnly) {
+    const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12)
+    return formatStatementDateValue(date)
+  }
+
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return text
+  return formatStatementDateValue(parsed)
+}

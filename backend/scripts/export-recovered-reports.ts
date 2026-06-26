@@ -15,8 +15,12 @@ import {
   MONTHLY_COMMISSION_USER,
 } from './validate-commission-reports.ts'
 import {
+  HIERARCHY_PRODUCT_ROLLUP_PERIOD_COMPARISON,
+} from './validate-hierarchy-rollup-reports.ts'
+import {
   INACTIVE_ENTITY_USERS_PERIOD_COMPARISON,
   PRODUCT_ENTITY_PERIOD_COMPARISON,
+  PRODUCT_HIERARCHY_PERIOD_COMPARISON,
   PRODUCT_SUMMARY_PERIOD_COMPARISON,
 } from './validate-product-analysis-reports.ts'
 import {
@@ -29,6 +33,7 @@ import {
   TRANSACTION_DETAIL_BY_PRODUCT,
   TRANSACTION_SUMMARY,
 } from './validate-transaction-reports.ts'
+import { BANK_STATEMENT_ANY_ENTITY } from './validate-bank-statement-reports.ts'
 
 const prisma = new PrismaClient()
 
@@ -84,9 +89,21 @@ const SCRIPT_REPORTS: ReportExport[] = [
     sql: PRODUCT_ENTITY_PERIOD_COMPARISON.trim(),
   },
   {
+    name: '[Product] - Summary by hierarchy — period comparison',
+    source: 'validate-product-analysis-reports.ts',
+    sql: PRODUCT_HIERARCHY_PERIOD_COMPARISON.trim(),
+  },
+  {
     name: '[Product] - Inactive entity users — period comparison',
     source: 'validate-product-analysis-reports.ts',
     sql: INACTIVE_ENTITY_USERS_PERIOD_COMPARISON.trim(),
+  },
+  {
+    name: '[Hierarchy] - Products by hierarchy — period comparison',
+    source: 'validate-hierarchy-rollup-reports.ts',
+    description:
+      'Full product list organized by business hierarchy with txn count, volume, and revenue for current vs previous period.',
+    sql: HIERARCHY_PRODUCT_ROLLUP_PERIOD_COMPARISON.trim(),
   },
   {
     name: 'Entity Balance Summary',
@@ -127,6 +144,13 @@ const SCRIPT_REPORTS: ReportExport[] = [
     name: 'Daily Commission — detail',
     source: 'validate-commission-reports.ts',
     sql: DAILY_COMMISSION_DETAIL.trim(),
+  },
+  {
+    name: 'Bank Statement — Any Entity (Dual Leg, DR / CR columns)',
+    source: 'validate-bank-statement-reports.ts',
+    description:
+      'Account statement with DR/CR columns. Mobile filter scopes transactions but output legs are restricted to the filtered account so balances stay on the correct ledger.',
+    sql: BANK_STATEMENT_ANY_ENTITY.trim(),
   },
 ]
 

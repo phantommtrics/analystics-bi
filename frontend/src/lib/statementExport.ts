@@ -12,21 +12,21 @@ import type {
   StatementConfig,
   StatementType,
 } from './statementConfig'
-import { cellValue } from './statementConfig'
+import {
+  cellNumber,
+  cellString,
+  cellValue,
+  formatStatementDate,
+} from './statementConfig'
 
-function cellString(row: Record<string, unknown>, column?: string): string {
-  if (!column) return ''
-  const value = row[column]
-  if (value === null || value === undefined) return ''
-  return String(value)
+function emptyExportRow(columns: string[]): Record<string, string> {
+  return Object.fromEntries(columns.map((column) => [column, '']))
 }
 
-function cellNumber(row: Record<string, unknown>, column?: string): number | undefined {
-  if (!column) return undefined
-  const value = row[column]
-  if (value === null || value === undefined || value === '') return undefined
-  const num = Number(value)
-  return Number.isFinite(num) ? num : undefined
+function metadataExportRow(columns: string[], description: string): Record<string, string> {
+  const row = emptyExportRow(columns)
+  row.Description = description
+  return row
 }
 
 function formatAmount(value: number | undefined): string {
@@ -89,7 +89,7 @@ export function statementToExportResult(
 
       const exportRows = rows.map((row) => {
         const out: Record<string, string> = {
-          Date: cellString(row, mapping.date),
+          Date: formatStatementDate(cellValue(row, mapping.date)),
           Description: cellString(row, mapping.description),
         }
         if (mapping.reference) out.Reference = cellString(row, mapping.reference)
@@ -105,10 +105,9 @@ export function statementToExportResult(
       if (headerData?.rows?.[0]) {
         const header = headerData.rows[0]
         for (const [key, value] of Object.entries(header)) {
-          exportRows.unshift({
-            Date: '',
-            Description: `${key}: ${String(value ?? '')}`,
-          })
+          exportRows.unshift(
+            metadataExportRow(columns, `${key}: ${String(value ?? '')}`),
+          )
         }
       }
 

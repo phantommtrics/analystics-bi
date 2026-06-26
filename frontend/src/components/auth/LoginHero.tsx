@@ -20,11 +20,11 @@ export function LoginHero() {
 
       <div className="relative z-10">
         <div className="login-fade-up flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gold text-xl font-bold text-brand-navy shadow-lg shadow-brand-gold/30">
-            A
+          <div className="flex h-11 min-w-11 items-center justify-center rounded-xl bg-brand-gold px-2 text-base font-bold text-brand-navy shadow-lg shadow-brand-gold/30">
+            Px
           </div>
           <div>
-            <p className="text-lg font-semibold tracking-tight">APS Wallet BI</p>
+            <p className="text-lg font-semibold tracking-tight">PrixBI</p>
             <p className="text-xs uppercase tracking-[0.2em] text-white/50">
               Intelligence Platform
             </p>

@@ -75,7 +75,7 @@ function buildReminderHtml(payload: SubscriptionReminderEmailPayload): string {
     <tr><td align="center">
       <table role="presentation" width="100%" style="max-width:560px;background:#fff;border-radius:8px;border:1px solid ${BRAND.border};">
         <tr><td style="background:${BRAND.navy};padding:24px 28px;border-radius:8px 8px 0 0;">
-          <h1 style="margin:0;color:#fff;font-size:20px;">APS Wallet BI — subscription reminder</h1>
+          <h1 style="margin:0;color:#fff;font-size:20px;">PrixBI — subscription reminder</h1>
         </td></tr>
         <tr><td style="padding:28px;">
           <p style="margin:0 0 16px;">Hello ${name},</p>

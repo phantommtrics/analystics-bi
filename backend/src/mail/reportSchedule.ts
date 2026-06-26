@@ -71,7 +71,7 @@ function buildReportScheduleHtml(payload: ReportScheduleEmailPayload): string {
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid ${BRAND.border};box-shadow:0 8px 24px rgba(15,26,46,0.08);">
           <tr>
             <td style="background:linear-gradient(135deg, ${BRAND.navy} 0%, #1a3358 100%);padding:28px 32px;">
-              <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.72);">APS Wallet BI</p>
+              <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.72);">PrixBI</p>
               <h1 style="margin:8px 0 0;font-size:22px;line-height:1.3;font-weight:600;color:#ffffff;">Scheduled report ready</h1>
             </td>
           </tr>
@@ -110,7 +110,7 @@ function buildReportScheduleHtml(payload: ReportScheduleEmailPayload): string {
             <td style="padding:20px 32px;background-color:${BRAND.surface};border-top:1px solid ${BRAND.border};">
               <p style="margin:0;font-size:12px;line-height:1.5;color:${BRAND.muted};text-align:center;">
                 You received this because you belong to the scheduled recipient group.<br />
-                &copy; APS Wallet BI
+                &copy; PrixBI
               </p>
             </td>
           </tr>

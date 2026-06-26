@@ -26,7 +26,27 @@ app.set('trust proxy', true)
 
 app.use(
   cors({
-    origin: env.CORS_ORIGIN,
+    origin(origin, callback) {
+      if (!origin) {
+        callback(null, true)
+        return
+      }
+
+      if (env.CORS_ORIGIN.includes(origin)) {
+        callback(null, true)
+        return
+      }
+
+      if (
+        env.NODE_ENV === 'development' &&
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+      ) {
+        callback(null, true)
+        return
+      }
+
+      callback(null, false)
+    },
   }),
 )
 

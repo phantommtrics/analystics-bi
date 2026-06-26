@@ -1,0 +1,4681 @@
+BI Reports — Dashboard Query Export
+Generated: 2026-06-16T15:19:52.366Z
+
+PURPOSE
+Summarized SQL for dashboard widgets (KPI cards, charts, compact tables).
+Derived from recovered summary reports in backend/recovered-reports.txt.
+Detail / line-level reports are excluded — use those in Report Catalog for drilldown.
+
+DASHBOARD BUILDER RULES
+- KPI widget: bind savedReportId + valueColumn (+ rowIndex 0) from a query returning one numeric cell.
+- Bar / line chart: first result column = category label; remaining columns = numeric series.
+- Pie chart: first column = slice name; first numeric column = slice value.
+- Table widget: aggregated rows only; SQL should use LIMIT (≤15 rows fit the compact canvas).
+- Do not attach detail reports (transaction lines, user balances, statements) as chart widgets.
+- Transaction volume and count metrics scope to the "EMoney" pouch only.
+
+MAIN DASHBOARD LAYOUT REFERENCE
+Main Dashboard layout (reference for custom dashboards)
+──────────────────────────────────────────────────────
+Row 1 — KPI strip (4 × 3-col widgets, h=2)
+  • Total System Float          → KPI — Total System Float
+  • Transaction Count           → KPI — Transaction Count
+  • Fee Revenue                 → KPI — Fee Revenue
+  • Agents with Commission      → KPI — Agents with Commission Releases
+
+Row 2 — Primary charts (8-col bar + 4-col pie, h=4)
+  • Daily Transaction Volume    → Chart — Daily Transaction Trend (LINE_CHART)
+  • Fee Revenue Breakdown       → Chart — Fee Revenue by Stream (PIE_CHART)
+
+Row 3 — Summary panel (8-col table + 4-col breakdown, h=5)
+  • Top Performing Agents       → Table — Top Agents by Commission
+  • Float by Entity             → Chart — System Float by Entity (PIE_CHART)
+
+Chart rules (rowsToChartData / rowsToPieData)
+  • First column = category label (scope, stream, entity, product, day)
+  • Remaining columns = numeric series (counts, volumes, revenue)
+  • Pie charts use the first numeric column only
+  • KPI widgets bind valueColumn (+ optional rowIndex) from a single-row or scalar result
+  • Table widgets: keep ≤15 rows on canvas (compact page size); use LIMIT in SQL
+
+Transaction volume & count scope
+  • All txn_count and transaction_volume metrics use the EMoney pouch only (not Commission, Bonus, Bank Emoney, etc.)
+
+System float scope
+  • Total System Float and float breakdown widgets exclude the "Bank" entity
+
+EXCLUDED REPORTS (7 — drilldown / detail only)
+- [Revenue] - Transaction detail
+  Line-level fee rows — use Report View for drilldown, not dashboard widgets.
+- [Transaction] - Detail by product
+  Product grain within scope — too many rows for charts; link from summary widget.
+- [Transaction] - Detail by entity and product
+  Entity × product grain — drilldown table only.
+- User Balance Detail As At
+  Per-user balance rows — not suitable for KPI/chart aggregation.
+- Monthly Commission — detail
+  Transaction-level commission lines — drilldown only.
+- Daily Commission — detail
+  Transaction-level commission lines — drilldown only.
+- Bank Statement — Any Entity (Dual Leg, DR / CR columns)
+  Account statement format — belongs in Statements, not dashboards.
+
+DASHBOARD QUERIES (19 — ready for Dashboard Builder)
+================================================================================
+QUERY 1: Dashboard KPI — Total System Float
+Based on: Entity Balance Summary
+Description: Single metric: sum of user wallet balances as at dateTo, excluding the Bank entity. Mirrors “Total System Float” on the main dashboard.
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: BALANCE
+Layout: Row 1 · w=3 h=2 · KPI card
+KPI valueColumn: total_system_float (Total System Float)
+
+SQL:
+SELECT SUM(b.total_current_balance) AS total_system_float
+FROM (
+WITH entities_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM entities
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+hierarchies_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM business_hierarchies
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+pouches_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM pouches
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+
+latest_balances_current AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+latest_balances_previous AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+period_balances AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.pouch_id, p.pouch_id) AS pouch_id,
+    COALESCE(p.latest_balance, 0) AS previous_balance,
+    COALESCE(c.latest_balance, 0) AS current_balance,
+    p.balance_as_of AS previous_balance_as_of,
+    c.balance_as_of AS current_balance_as_of
+  FROM latest_balances_current c
+  FULL OUTER JOIN latest_balances_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.pouch_id = p.pouch_id
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+customer_entity AS (
+  SELECT id FROM entities_d WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_d WHERE name = 'Customer' LIMIT 1
+)
+SELECT
+  :dateFrom AS period_start,
+  :dateTo AS period_end,
+  (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_as_at_date,
+  CAST(:dateTo AS date) AS current_as_at_date,
+  COALESCE(h.name, 'Unassigned') AS hierarchy_name,
+  e.name AS entity_name,
+  p.name AS pouch_name,
+  l.pouch_id,
+  COUNT(*) AS user_count,
+  COUNT(*) FILTER (WHERE l.previous_balance = 0) AS zero_previous_balance_users,
+  COUNT(*) FILTER (WHERE l.current_balance = 0) AS zero_current_balance_users,
+  SUM(l.previous_balance) AS total_previous_balance,
+  SUM(l.current_balance) AS total_current_balance,
+  SUM(l.current_balance) - SUM(l.previous_balance) AS balance_change
+FROM period_balances l
+INNER JOIN entities_d e ON e.id = l.entity_id
+INNER JOIN pouches_d p ON p.id = l.pouch_id
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
+LEFT JOIN user_ctx u ON u.mobile = l.user_identifier
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE u.hierarchy_id END
+GROUP BY h.name, e.name, p.name, l.pouch_id
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  p.name
+) b
+WHERE b.entity_name <> 'Bank'
+
+================================================================================
+QUERY 2: Dashboard KPI — Transaction Count
+Based on: [Transaction] - Summary by scope
+Description: Single metric: total successful EMoney pouch business transactions in the selected date range (Customer + Agent scopes).
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: OPERATIONAL
+Layout: Row 1 · w=3 h=2 · KPI card
+KPI valueColumn: transaction_count (Transaction Count)
+
+SQL:
+SELECT SUM(t.txn_count)::int AS transaction_count
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end
+),
+
+entity_txn_volumes AS (
+  SELECT
+    e.id AS entity_id,
+    e.name AS entity_name,
+    e.entity_category,
+    t.transaction_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    [[AND e.entity_category = :entityCategory?]]
+    [[AND e.name = :entityName?]]
+  GROUP BY
+    e.id,
+    e.name,
+    e.entity_category,
+    t.transaction_id,
+    p.name,
+    p.display_name
+),
+scoped_txns AS (
+  SELECT
+    etv.entity_id,
+    etv.entity_name,
+    etv.entity_category,
+    etv.transaction_id,
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    CASE
+      WHEN etv.entity_category = 'CUSTOMER' THEN 'Customer'
+      WHEN etv.entity_category = 'AGENT' THEN 'Agent'
+      ELSE etv.entity_name
+    END AS scope_label
+  FROM entity_txn_volumes etv
+),
+scope_filtered AS (
+  SELECT *
+  FROM scoped_txns st
+  WHERE (
+    (:entityName? IS NOT NULL AND st.entity_name = :entityName?)
+    OR (:entityCategory? IS NOT NULL AND st.entity_category = :entityCategory?)
+    OR (:entityName? IS NULL AND :entityCategory? IS NULL AND st.scope_label IN ('Customer', 'Agent'))
+  )
+),
+summary AS (
+  SELECT
+    sf.scope_label,
+    sf.entity_category,
+    CASE
+      WHEN sf.scope_label IN ('Customer', 'Agent') THEN NULL::text
+      ELSE sf.entity_name
+    END AS entity_name,
+    COUNT(*)::int AS txn_count,
+    SUM(sf.transaction_volume) AS transaction_volume
+  FROM scope_filtered sf
+  GROUP BY
+    sf.scope_label,
+    sf.entity_category,
+    CASE
+      WHEN sf.scope_label IN ('Customer', 'Agent') THEN NULL::text
+      ELSE sf.entity_name
+    END
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  s.scope_label,
+  s.entity_category,
+  s.entity_name,
+  s.txn_count,
+  s.transaction_volume
+FROM summary s
+CROSS JOIN period_bounds pb
+ORDER BY
+  CASE s.scope_label
+    WHEN 'Customer' THEN 0
+    WHEN 'Agent' THEN 1
+    ELSE 2
+  END,
+  s.transaction_volume DESC NULLS LAST,
+  s.scope_label
+) t
+WHERE t.scope_label IN ('Customer', 'Agent')
+
+================================================================================
+QUERY 3: Dashboard KPI — Fee Revenue
+Based on: [Revenue] - Summary by stream
+Description: Single metric: total wallet fee revenue in the period (recorded + calculated streams, excluding subtotal rows).
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: FINANCIAL
+Layout: Row 1 · w=3 h=2 · KPI card
+KPI valueColumn: fee_revenue (Fee Revenue)
+
+SQL:
+SELECT SUM(r.revenue_amount) AS fee_revenue
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end
+),
+
+intouch_moov_recorded_products AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines AS (
+  SELECT
+    CASE
+      WHEN t.remarks ILIKE '%Internal Wallet Transfer FEE%' THEN 'Internal Wallet Transfer Fee'
+      WHEN t.remarks ILIKE '%International Remittance COMMISSION%' THEN 'International Remittance Commission'
+      WHEN t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%' THEN 'Bank to Wallet Fee'
+      WHEN t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%' THEN 'Wallet to Bank Fee'
+      WHEN t.remarks ILIKE '%INTOUCH%FEE%'
+        OR t.remarks ILIKE '%Moov%FEE%'
+        OR t.remarks ILIKE '%MOOV%FEE%'
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+      WHEN t.remarks ~* '^You have received .+ FEE of '
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+    END AS revenue_category,
+    'recorded'::text AS calculation_method,
+    NULL::numeric AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines AS (
+  SELECT
+    CASE
+      WHEN p.name = 'Disbursement' THEN 'Disbursement (0.9%)'
+      WHEN s.name = 'Airtime Topup' THEN 'Airtime (5%)'
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN p.name || ' (1%)'
+      WHEN p.name = 'APS PAY' THEN 'APS PAY (0.8%)'
+    END AS revenue_category,
+    'calculated'::text AS calculation_method,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      WHEN s.name = 'Airtime Topup' THEN 5.0
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 1.0
+      WHEN p.name = 'APS PAY' THEN 0.8
+    END AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines AS (
+  SELECT * FROM recorded_fee_lines
+  UNION ALL
+  SELECT * FROM calculated_fee_lines
+),
+stream_summary AS (
+  SELECT
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct,
+    COUNT(*)::int AS txn_count,
+    SUM(rl.transaction_volume) AS transaction_volume,
+    SUM(rl.revenue_amount) AS revenue_amount
+  FROM revenue_lines rl
+  GROUP BY
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct
+),
+section_subtotals AS (
+  SELECT
+    CASE
+      WHEN ss.calculation_method = 'calculated' THEN 'Subtotal — Manual calculations'
+      ELSE 'Subtotal — Recorded fee credits'
+    END AS revenue_category,
+    ss.calculation_method,
+    NULL::numeric AS rate_pct,
+    SUM(ss.txn_count)::int AS txn_count,
+    SUM(ss.transaction_volume) AS transaction_volume,
+    SUM(ss.revenue_amount) AS revenue_amount,
+    true AS is_subtotal
+  FROM stream_summary ss
+  GROUP BY ss.calculation_method
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  ss.revenue_category,
+  ss.calculation_method,
+  ss.rate_pct,
+  ss.txn_count,
+  ss.transaction_volume,
+  ss.revenue_amount,
+  false AS is_subtotal
+FROM stream_summary ss
+CROSS JOIN period_bounds pb
+UNION ALL
+SELECT
+  pb.period_start,
+  pb.period_end,
+  st.revenue_category,
+  st.calculation_method,
+  st.rate_pct,
+  st.txn_count,
+  st.transaction_volume,
+  st.revenue_amount,
+  st.is_subtotal
+FROM section_subtotals st
+CROSS JOIN period_bounds pb
+ORDER BY
+  is_subtotal,
+  revenue_amount DESC NULLS LAST,
+  revenue_category
+) r
+WHERE NOT r.is_subtotal
+  AND r.revenue_category NOT LIKE 'Subtotal%'
+
+================================================================================
+QUERY 4: Dashboard KPI — Agents with Commission Releases
+Based on: Daily Commission — rollup
+Description: Single metric: count of distinct agents who received daily commission releases in the current period.
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: AGENT
+Layout: Row 1 · w=3 h=2 · KPI card
+KPI valueColumn: active_agents (Active Agents)
+
+SQL:
+SELECT SUM(c.users_with_releases)::int AS active_agents
+FROM (
+WITH 
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+release_txs_current AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 51
+    AND t.service_id = 17
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+release_txs_previous AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  CROSS JOIN period_bounds pb
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 51
+    AND t.service_id = 17
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= pb.previous_period_start::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+user_releases_current AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_current
+  GROUP BY 1, 2, 3, 4
+),
+user_releases_previous AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_previous
+  GROUP BY 1, 2, 3, 4
+),
+period_releases AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.service_id, p.service_id) AS service_id,
+    COALESCE(c.product_id, p.product_id) AS product_id,
+    COALESCE(p.release_count, 0) AS previous_release_count,
+    COALESCE(c.release_count, 0) AS current_release_count,
+    COALESCE(p.total_released, 0) AS total_previous_released,
+    COALESCE(c.total_released, 0) AS total_current_released
+  FROM user_releases_current c
+  FULL OUTER JOIN user_releases_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.service_id = p.service_id
+    AND c.product_id = p.product_id
+),
+
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.mobile,
+    au.id AS agent_profile_id,
+    au.user_id,
+    au.entity_id AS agent_entity_id,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS profile_name
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+),
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+)
+
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  COALESCE(s.display_name, s.name) AS service_name,
+  COALESCE(p.display_name, p.name) AS product_name,
+  COUNT(DISTINCT abm.user_id) AS users_with_releases,
+  SUM(pr.previous_release_count)::int AS previous_release_count,
+  SUM(pr.current_release_count)::int AS current_release_count,
+  SUM(pr.total_previous_released) AS total_previous_released,
+  SUM(pr.total_current_released) AS total_current_released,
+  SUM(pr.total_current_released) - SUM(pr.total_previous_released) AS release_change
+FROM period_releases pr
+CROSS JOIN period_bounds pb
+LEFT JOIN agent_by_mobile abm ON abm.mobile = pr.user_identifier
+LEFT JOIN entities_deduped e ON e.id = COALESCE(abm.agent_entity_id, pr.entity_id)
+LEFT JOIN services_deduped s ON s.id = pr.service_id
+LEFT JOIN products_deduped p ON p.id = pr.product_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = abm.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE 1 = 1
+  
+GROUP BY
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  bh.name,
+  pe.name,
+  e.name,
+  e.entity_category,
+  s.display_name,
+  s.name,
+  p.display_name,
+  p.name
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  total_current_released DESC
+) c
+
+================================================================================
+QUERY 5: Dashboard Chart — Daily Transaction Trend
+Based on: [Transaction] - Summary by scope (daily grain)
+Description: Daily EMoney pouch transaction count for Customer + Agent activity. First column = day (chart label); use LINE_CHART or BAR_CHART.
+Widget: LINE_CHART
+Suggested visualization: LINE_CHART
+Category: OPERATIONAL
+Layout: Row 2 · w=8 h=4 · wide chart
+Chart label column: day
+Chart value columns: txn_count, transaction_volume
+Drilldown report (not on dashboard): [Transaction] - Detail by product
+
+SQL:
+WITH entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+entity_txn_volumes AS (
+  SELECT
+    t.created_at::date AS day,
+    t.transaction_id,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND e.entity_category IN ('CUSTOMER', 'AGENT')
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  GROUP BY t.created_at::date, t.transaction_id
+)
+SELECT
+  day,
+  COUNT(*)::int AS txn_count,
+  SUM(transaction_volume) AS transaction_volume
+FROM entity_txn_volumes
+GROUP BY day
+ORDER BY day
+
+================================================================================
+QUERY 6: Dashboard Chart — Transaction Volume by Scope
+Based on: [Transaction] - Summary by scope
+Description: Customer vs Agent (or filtered entity) EMoney pouch txn count and volume. Bar chart: scope_label + numeric columns.
+Widget: BAR_CHART
+Suggested visualization: BAR_CHART
+Category: OPERATIONAL
+Layout: Row 2 alt · w=8 h=4
+Chart label column: scope_label
+Chart value columns: txn_count, transaction_volume
+Drilldown report (not on dashboard): [Transaction] - Detail by product
+
+SQL:
+SELECT
+  t.scope_label,
+  t.txn_count,
+  t.transaction_volume
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end
+),
+
+entity_txn_volumes AS (
+  SELECT
+    e.id AS entity_id,
+    e.name AS entity_name,
+    e.entity_category,
+    t.transaction_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    [[AND e.entity_category = :entityCategory?]]
+    [[AND e.name = :entityName?]]
+  GROUP BY
+    e.id,
+    e.name,
+    e.entity_category,
+    t.transaction_id,
+    p.name,
+    p.display_name
+),
+scoped_txns AS (
+  SELECT
+    etv.entity_id,
+    etv.entity_name,
+    etv.entity_category,
+    etv.transaction_id,
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    CASE
+      WHEN etv.entity_category = 'CUSTOMER' THEN 'Customer'
+      WHEN etv.entity_category = 'AGENT' THEN 'Agent'
+      ELSE etv.entity_name
+    END AS scope_label
+  FROM entity_txn_volumes etv
+),
+scope_filtered AS (
+  SELECT *
+  FROM scoped_txns st
+  WHERE (
+    (:entityName? IS NOT NULL AND st.entity_name = :entityName?)
+    OR (:entityCategory? IS NOT NULL AND st.entity_category = :entityCategory?)
+    OR (:entityName? IS NULL AND :entityCategory? IS NULL AND st.scope_label IN ('Customer', 'Agent'))
+  )
+),
+summary AS (
+  SELECT
+    sf.scope_label,
+    sf.entity_category,
+    CASE
+      WHEN sf.scope_label IN ('Customer', 'Agent') THEN NULL::text
+      ELSE sf.entity_name
+    END AS entity_name,
+    COUNT(*)::int AS txn_count,
+    SUM(sf.transaction_volume) AS transaction_volume
+  FROM scope_filtered sf
+  GROUP BY
+    sf.scope_label,
+    sf.entity_category,
+    CASE
+      WHEN sf.scope_label IN ('Customer', 'Agent') THEN NULL::text
+      ELSE sf.entity_name
+    END
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  s.scope_label,
+  s.entity_category,
+  s.entity_name,
+  s.txn_count,
+  s.transaction_volume
+FROM summary s
+CROSS JOIN period_bounds pb
+ORDER BY
+  CASE s.scope_label
+    WHEN 'Customer' THEN 0
+    WHEN 'Agent' THEN 1
+    ELSE 2
+  END,
+  s.transaction_volume DESC NULLS LAST,
+  s.scope_label
+) t
+ORDER BY t.transaction_volume DESC NULLS LAST
+
+================================================================================
+QUERY 7: Dashboard Chart — Fee Revenue by Stream
+Based on: [Revenue] - Summary by stream
+Description: Pie chart of fee revenue by stream. Excludes subtotal rows so slices match real revenue categories.
+Widget: PIE_CHART
+Suggested visualization: PIE_CHART
+Category: FINANCIAL
+Layout: Row 2 · w=4 h=4 · pie
+Chart label column: revenue_category
+Chart value columns: revenue_amount
+Drilldown report (not on dashboard): [Revenue] - Transaction detail
+
+SQL:
+SELECT
+  r.revenue_category,
+  r.revenue_amount
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end
+),
+
+intouch_moov_recorded_products AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines AS (
+  SELECT
+    CASE
+      WHEN t.remarks ILIKE '%Internal Wallet Transfer FEE%' THEN 'Internal Wallet Transfer Fee'
+      WHEN t.remarks ILIKE '%International Remittance COMMISSION%' THEN 'International Remittance Commission'
+      WHEN t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%' THEN 'Bank to Wallet Fee'
+      WHEN t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%' THEN 'Wallet to Bank Fee'
+      WHEN t.remarks ILIKE '%INTOUCH%FEE%'
+        OR t.remarks ILIKE '%Moov%FEE%'
+        OR t.remarks ILIKE '%MOOV%FEE%'
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+      WHEN t.remarks ~* '^You have received .+ FEE of '
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+    END AS revenue_category,
+    'recorded'::text AS calculation_method,
+    NULL::numeric AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines AS (
+  SELECT
+    CASE
+      WHEN p.name = 'Disbursement' THEN 'Disbursement (0.9%)'
+      WHEN s.name = 'Airtime Topup' THEN 'Airtime (5%)'
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN p.name || ' (1%)'
+      WHEN p.name = 'APS PAY' THEN 'APS PAY (0.8%)'
+    END AS revenue_category,
+    'calculated'::text AS calculation_method,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      WHEN s.name = 'Airtime Topup' THEN 5.0
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 1.0
+      WHEN p.name = 'APS PAY' THEN 0.8
+    END AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines AS (
+  SELECT * FROM recorded_fee_lines
+  UNION ALL
+  SELECT * FROM calculated_fee_lines
+),
+stream_summary AS (
+  SELECT
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct,
+    COUNT(*)::int AS txn_count,
+    SUM(rl.transaction_volume) AS transaction_volume,
+    SUM(rl.revenue_amount) AS revenue_amount
+  FROM revenue_lines rl
+  GROUP BY
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct
+),
+section_subtotals AS (
+  SELECT
+    CASE
+      WHEN ss.calculation_method = 'calculated' THEN 'Subtotal — Manual calculations'
+      ELSE 'Subtotal — Recorded fee credits'
+    END AS revenue_category,
+    ss.calculation_method,
+    NULL::numeric AS rate_pct,
+    SUM(ss.txn_count)::int AS txn_count,
+    SUM(ss.transaction_volume) AS transaction_volume,
+    SUM(ss.revenue_amount) AS revenue_amount,
+    true AS is_subtotal
+  FROM stream_summary ss
+  GROUP BY ss.calculation_method
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  ss.revenue_category,
+  ss.calculation_method,
+  ss.rate_pct,
+  ss.txn_count,
+  ss.transaction_volume,
+  ss.revenue_amount,
+  false AS is_subtotal
+FROM stream_summary ss
+CROSS JOIN period_bounds pb
+UNION ALL
+SELECT
+  pb.period_start,
+  pb.period_end,
+  st.revenue_category,
+  st.calculation_method,
+  st.rate_pct,
+  st.txn_count,
+  st.transaction_volume,
+  st.revenue_amount,
+  st.is_subtotal
+FROM section_subtotals st
+CROSS JOIN period_bounds pb
+ORDER BY
+  is_subtotal,
+  revenue_amount DESC NULLS LAST,
+  revenue_category
+) r
+WHERE NOT r.is_subtotal
+  AND r.revenue_category NOT LIKE 'Subtotal%'
+ORDER BY r.revenue_amount DESC NULLS LAST
+
+================================================================================
+QUERY 8: Dashboard Chart — Revenue Stream Period Comparison
+Based on: [Revenue] - Summary by stream — period comparison
+Description: Bar chart comparing current vs previous period revenue by stream.
+Widget: BAR_CHART
+Suggested visualization: BAR_CHART
+Category: FINANCIAL
+Layout: Row 2 alt · w=8 h=4
+Chart label column: revenue_category
+Chart value columns: current_revenue_amount, previous_revenue_amount
+
+SQL:
+SELECT
+  r.revenue_category,
+  r.current_revenue_amount,
+  r.previous_revenue_amount,
+  r.revenue_change
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+intouch_moov_recorded_products_current AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines_current AS (
+  SELECT
+    CASE
+      WHEN t.remarks ILIKE '%Internal Wallet Transfer FEE%' THEN 'Internal Wallet Transfer Fee'
+      WHEN t.remarks ILIKE '%International Remittance COMMISSION%' THEN 'International Remittance Commission'
+      WHEN t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%' THEN 'Bank to Wallet Fee'
+      WHEN t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%' THEN 'Wallet to Bank Fee'
+      WHEN t.remarks ILIKE '%INTOUCH%FEE%'
+        OR t.remarks ILIKE '%Moov%FEE%'
+        OR t.remarks ILIKE '%MOOV%FEE%'
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+      WHEN t.remarks ~* '^You have received .+ FEE of '
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+    END AS revenue_category,
+    'recorded'::text AS calculation_method,
+    NULL::numeric AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines_current AS (
+  SELECT
+    CASE
+      WHEN p.name = 'Disbursement' THEN 'Disbursement (0.9%)'
+      WHEN s.name = 'Airtime Topup' THEN 'Airtime (5%)'
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN p.name || ' (1%)'
+      WHEN p.name = 'APS PAY' THEN 'APS PAY (0.8%)'
+    END AS revenue_category,
+    'calculated'::text AS calculation_method,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      WHEN s.name = 'Airtime Topup' THEN 5.0
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 1.0
+      WHEN p.name = 'APS PAY' THEN 0.8
+    END AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_current rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines_current AS (
+  SELECT * FROM recorded_fee_lines_current
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_current
+),
+
+intouch_moov_recorded_products_previous AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+recorded_fee_lines_previous AS (
+  SELECT
+    CASE
+      WHEN t.remarks ILIKE '%Internal Wallet Transfer FEE%' THEN 'Internal Wallet Transfer Fee'
+      WHEN t.remarks ILIKE '%International Remittance COMMISSION%' THEN 'International Remittance Commission'
+      WHEN t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%' THEN 'Bank to Wallet Fee'
+      WHEN t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%' THEN 'Wallet to Bank Fee'
+      WHEN t.remarks ILIKE '%INTOUCH%FEE%'
+        OR t.remarks ILIKE '%Moov%FEE%'
+        OR t.remarks ILIKE '%MOOV%FEE%'
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+      WHEN t.remarks ~* '^You have received .+ FEE of '
+        THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')) || ' Fee'
+    END AS revenue_category,
+    'recorded'::text AS calculation_method,
+    NULL::numeric AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    t.transaction_amount::numeric AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+calculated_fee_lines_previous AS (
+  SELECT
+    CASE
+      WHEN p.name = 'Disbursement' THEN 'Disbursement (0.9%)'
+      WHEN s.name = 'Airtime Topup' THEN 'Airtime (5%)'
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN p.name || ' (1%)'
+      WHEN p.name = 'APS PAY' THEN 'APS PAY (0.8%)'
+    END AS revenue_category,
+    'calculated'::text AS calculation_method,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      WHEN s.name = 'Airtime Topup' THEN 5.0
+      WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 1.0
+      WHEN p.name = 'APS PAY' THEN 0.8
+    END AS rate_pct,
+    t.id AS transaction_row_id,
+    t.transaction_id,
+    t.created_at::date AS transaction_date,
+    t.created_at AS transaction_timestamp,
+    COALESCE(s.display_name, s.name) AS service_name,
+    COALESCE(p.display_name, p.name) AS product_name,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount,
+    t.remarks
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_previous rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+revenue_lines_previous AS (
+  SELECT * FROM recorded_fee_lines_previous
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_previous
+),
+stream_summary_current AS (
+  SELECT
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct,
+    COUNT(*)::int AS txn_count,
+    SUM(rl.transaction_volume) AS transaction_volume,
+    SUM(rl.revenue_amount) AS revenue_amount
+  FROM revenue_lines_current rl
+  GROUP BY
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct
+),
+stream_summary_previous AS (
+  SELECT
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct,
+    COUNT(*)::int AS txn_count,
+    SUM(rl.transaction_volume) AS transaction_volume,
+    SUM(rl.revenue_amount) AS revenue_amount
+  FROM revenue_lines_previous rl
+  GROUP BY
+    rl.revenue_category,
+    rl.calculation_method,
+    rl.rate_pct
+),
+period_streams AS (
+  SELECT
+    COALESCE(c.revenue_category, p.revenue_category) AS revenue_category,
+    COALESCE(c.calculation_method, p.calculation_method) AS calculation_method,
+    COALESCE(c.rate_pct, p.rate_pct) AS rate_pct,
+    COALESCE(p.txn_count, 0)::int AS previous_txn_count,
+    COALESCE(c.txn_count, 0)::int AS current_txn_count,
+    COALESCE(p.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(c.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(p.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(c.revenue_amount, 0) AS current_revenue_amount,
+    COALESCE(c.revenue_amount, 0) - COALESCE(p.revenue_amount, 0) AS revenue_change
+  FROM stream_summary_current c
+  FULL OUTER JOIN stream_summary_previous p
+    ON c.revenue_category = p.revenue_category
+    AND c.calculation_method = p.calculation_method
+    AND c.rate_pct IS NOT DISTINCT FROM p.rate_pct
+),
+section_subtotals AS (
+  SELECT
+    CASE
+      WHEN ps.calculation_method = 'calculated' THEN 'Subtotal — Manual calculations'
+      ELSE 'Subtotal — Recorded fee credits'
+    END AS revenue_category,
+    ps.calculation_method,
+    NULL::numeric AS rate_pct,
+    SUM(ps.previous_txn_count)::int AS previous_txn_count,
+    SUM(ps.current_txn_count)::int AS current_txn_count,
+    SUM(ps.previous_transaction_volume) AS previous_transaction_volume,
+    SUM(ps.current_transaction_volume) AS current_transaction_volume,
+    SUM(ps.previous_revenue_amount) AS previous_revenue_amount,
+    SUM(ps.current_revenue_amount) AS current_revenue_amount,
+    SUM(ps.revenue_change) AS revenue_change,
+    true AS is_subtotal
+  FROM period_streams ps
+  GROUP BY ps.calculation_method
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  ps.revenue_category,
+  ps.calculation_method,
+  ps.rate_pct,
+  ps.previous_txn_count,
+  ps.current_txn_count,
+  ps.previous_transaction_volume,
+  ps.current_transaction_volume,
+  ps.previous_revenue_amount,
+  ps.current_revenue_amount,
+  ps.revenue_change,
+  false AS is_subtotal
+FROM period_streams ps
+CROSS JOIN period_bounds pb
+UNION ALL
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  st.revenue_category,
+  st.calculation_method,
+  st.rate_pct,
+  st.previous_txn_count,
+  st.current_txn_count,
+  st.previous_transaction_volume,
+  st.current_transaction_volume,
+  st.previous_revenue_amount,
+  st.current_revenue_amount,
+  st.revenue_change,
+  st.is_subtotal
+FROM section_subtotals st
+CROSS JOIN period_bounds pb
+ORDER BY
+  is_subtotal,
+  current_revenue_amount DESC NULLS LAST,
+  revenue_category
+) r
+WHERE NOT r.is_subtotal
+  AND r.revenue_category NOT LIKE 'Subtotal%'
+ORDER BY r.current_revenue_amount DESC NULLS LAST
+
+================================================================================
+QUERY 9: Dashboard Chart — System Float by Entity
+Based on: Entity Balance Summary
+Description: Pie chart of total current balance grouped by ledger entity (Customer, Agent, Trust, etc.), excluding Bank.
+Widget: PIE_CHART
+Suggested visualization: PIE_CHART
+Category: BALANCE
+Layout: Row 3 · w=4 h=5 · float monitor
+Chart label column: entity_name
+Chart value columns: total_balance
+Drilldown report (not on dashboard): User Balance Detail As At
+
+SQL:
+SELECT
+  b.entity_name,
+  SUM(b.total_current_balance) AS total_balance
+FROM (
+WITH entities_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM entities
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+hierarchies_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM business_hierarchies
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+pouches_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM pouches
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+
+latest_balances_current AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+latest_balances_previous AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+period_balances AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.pouch_id, p.pouch_id) AS pouch_id,
+    COALESCE(p.latest_balance, 0) AS previous_balance,
+    COALESCE(c.latest_balance, 0) AS current_balance,
+    p.balance_as_of AS previous_balance_as_of,
+    c.balance_as_of AS current_balance_as_of
+  FROM latest_balances_current c
+  FULL OUTER JOIN latest_balances_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.pouch_id = p.pouch_id
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+customer_entity AS (
+  SELECT id FROM entities_d WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_d WHERE name = 'Customer' LIMIT 1
+)
+SELECT
+  :dateFrom AS period_start,
+  :dateTo AS period_end,
+  (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_as_at_date,
+  CAST(:dateTo AS date) AS current_as_at_date,
+  COALESCE(h.name, 'Unassigned') AS hierarchy_name,
+  e.name AS entity_name,
+  p.name AS pouch_name,
+  l.pouch_id,
+  COUNT(*) AS user_count,
+  COUNT(*) FILTER (WHERE l.previous_balance = 0) AS zero_previous_balance_users,
+  COUNT(*) FILTER (WHERE l.current_balance = 0) AS zero_current_balance_users,
+  SUM(l.previous_balance) AS total_previous_balance,
+  SUM(l.current_balance) AS total_current_balance,
+  SUM(l.current_balance) - SUM(l.previous_balance) AS balance_change
+FROM period_balances l
+INNER JOIN entities_d e ON e.id = l.entity_id
+INNER JOIN pouches_d p ON p.id = l.pouch_id
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
+LEFT JOIN user_ctx u ON u.mobile = l.user_identifier
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE u.hierarchy_id END
+GROUP BY h.name, e.name, p.name, l.pouch_id
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  p.name
+) b
+WHERE b.entity_name <> 'Bank'
+GROUP BY b.entity_name
+ORDER BY total_balance DESC NULLS LAST
+
+================================================================================
+QUERY 10: Dashboard Chart — Product Revenue Comparison
+Based on: [Product] - Summary by product — period comparison
+Description: APS PAY, Ticket, Disbursement EMoney pouch volume and revenue — current vs previous period.
+Widget: BAR_CHART
+Suggested visualization: BAR_CHART
+Category: OPERATIONAL
+Layout: Row 2 alt · w=6 h=4
+Chart label column: display_name
+Chart value columns: current_revenue_amount, previous_revenue_amount
+
+SQL:
+SELECT
+  p.display_name,
+  p.current_txn_count,
+  p.current_transaction_volume,
+  p.current_revenue_amount,
+  p.previous_revenue_amount,
+  p.revenue_change
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+merchant_by_mobile AS (
+  SELECT DISTINCT ON (mu.mobile, mu.entity_id)
+    mu.mobile,
+    mu.user_id,
+    mu.entity_id,
+    COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      mu.full_name,
+      NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), '')
+    ) AS profile_name
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL
+    AND mu.mobile IS NOT NULL
+  ORDER BY mu.mobile, mu.entity_id, mu.id DESC
+),
+enterprise_by_mobile AS (
+  SELECT DISTINCT ON (eu.mobile, eu.entity_id)
+    eu.mobile,
+    eu.user_id,
+    eu.entity_id,
+    COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      eu.full_name,
+      NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), '')
+    ) AS profile_name
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL
+    AND eu.mobile IS NOT NULL
+  ORDER BY eu.mobile, eu.entity_id, eu.id DESC
+),
+target_products AS (
+  SELECT
+    p.id,
+    p.name,
+    COALESCE(p.display_name, p.name) AS display_name,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.009
+      ELSE 0.008
+    END AS revenue_rate,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      ELSE 0.8
+    END AS rate_pct,
+    CASE
+      WHEN p.name IN ('APS PAY', 'Ticket') THEN 'merchant'::text
+      WHEN p.name = 'Disbursement' THEN 'enterprise'::text
+    END AS profile_type
+  FROM products_deduped p
+  WHERE p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+product_txns_current AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_current
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_current AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_current
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_txns_previous AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_previous AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_previous
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+all_products AS (
+  SELECT * FROM target_products
+),
+product_comparison AS (
+  SELECT
+    ap.name AS product_name,
+    ap.display_name,
+    ap.rate_pct,
+    ap.profile_type,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr.revenue_amount, 0) AS current_revenue_amount,
+    COALESCE(curr.revenue_amount, 0) - COALESCE(prev.revenue_amount, 0) AS revenue_change
+  FROM all_products ap
+  LEFT JOIN product_summary_previous prev ON prev.product_name = ap.name
+  LEFT JOIN product_summary_current curr ON curr.product_name = ap.name
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  pc.product_name,
+  pc.display_name,
+  pc.rate_pct,
+  pc.profile_type,
+  pc.previous_txn_count,
+  pc.current_txn_count,
+  pc.current_txn_count - pc.previous_txn_count AS txn_count_change,
+  pc.previous_transaction_volume,
+  pc.current_transaction_volume,
+  pc.current_transaction_volume - pc.previous_transaction_volume AS transaction_volume_change,
+  pc.previous_revenue_amount,
+  pc.current_revenue_amount,
+  pc.revenue_change
+FROM product_comparison pc
+CROSS JOIN period_bounds pb
+ORDER BY pc.current_revenue_amount DESC NULLS LAST, pc.product_name
+) p
+ORDER BY p.current_revenue_amount DESC NULLS LAST
+
+================================================================================
+QUERY 11: Dashboard Chart — Product Volume by Hierarchy
+Based on: [Product] - Summary by hierarchy — period comparison
+Description: Hierarchy-level EMoney pouch product volume for the current period. Aggregated for chart readability.
+Widget: BAR_CHART
+Suggested visualization: BAR_CHART
+Category: OPERATIONAL
+Layout: Row 2 alt · w=8 h=4
+Chart label column: hierarchy_name
+Chart value columns: current_transaction_volume, current_revenue_amount
+Max rows (dashboard table): 12
+
+SQL:
+SELECT
+  h.hierarchy_name,
+  SUM(h.current_txn_count)::int AS current_txn_count,
+  SUM(h.current_transaction_volume) AS current_transaction_volume,
+  SUM(h.current_revenue_amount) AS current_revenue_amount
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+merchant_by_mobile AS (
+  SELECT DISTINCT ON (mu.mobile, mu.entity_id)
+    mu.mobile,
+    mu.user_id,
+    mu.entity_id,
+    COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      mu.full_name,
+      NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), '')
+    ) AS profile_name
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL
+    AND mu.mobile IS NOT NULL
+  ORDER BY mu.mobile, mu.entity_id, mu.id DESC
+),
+enterprise_by_mobile AS (
+  SELECT DISTINCT ON (eu.mobile, eu.entity_id)
+    eu.mobile,
+    eu.user_id,
+    eu.entity_id,
+    COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      eu.full_name,
+      NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), '')
+    ) AS profile_name
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL
+    AND eu.mobile IS NOT NULL
+  ORDER BY eu.mobile, eu.entity_id, eu.id DESC
+),
+target_products AS (
+  SELECT
+    p.id,
+    p.name,
+    COALESCE(p.display_name, p.name) AS display_name,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.009
+      ELSE 0.008
+    END AS revenue_rate,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      ELSE 0.8
+    END AS rate_pct,
+    CASE
+      WHEN p.name IN ('APS PAY', 'Ticket') THEN 'merchant'::text
+      WHEN p.name = 'Disbursement' THEN 'enterprise'::text
+    END AS profile_type
+  FROM products_deduped p
+  WHERE p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+product_txns_current AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_current
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_current AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_current
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_txns_previous AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_previous AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_previous
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_txns_with_hierarchy_current AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    pt.transaction_volume,
+    pt.revenue_amount,
+    COALESCE(mbm.hierarchy_id, ebm.hierarchy_id) AS hierarchy_id
+  FROM product_txns_current pt
+  LEFT JOIN merchant_by_mobile mbm
+    ON pt.profile_type = 'merchant'
+    AND mbm.mobile = pt.user_identifier
+    AND mbm.entity_id = pt.entity_id
+  LEFT JOIN enterprise_by_mobile ebm
+    ON pt.profile_type = 'enterprise'
+    AND ebm.mobile = pt.user_identifier
+    AND ebm.entity_id = pt.entity_id
+),
+product_txns_with_hierarchy_previous AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    pt.transaction_volume,
+    pt.revenue_amount,
+    COALESCE(mbm.hierarchy_id, ebm.hierarchy_id) AS hierarchy_id
+  FROM product_txns_previous pt
+  LEFT JOIN merchant_by_mobile mbm
+    ON pt.profile_type = 'merchant'
+    AND mbm.mobile = pt.user_identifier
+    AND mbm.entity_id = pt.entity_id
+  LEFT JOIN enterprise_by_mobile ebm
+    ON pt.profile_type = 'enterprise'
+    AND ebm.mobile = pt.user_identifier
+    AND ebm.entity_id = pt.entity_id
+),
+product_hierarchy_txns_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    hierarchy_id,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_with_hierarchy_current
+  GROUP BY product_name, display_name, rate_pct, profile_type, hierarchy_id
+),
+product_hierarchy_txns_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    hierarchy_id,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_with_hierarchy_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type, hierarchy_id
+),
+hierarchy_product_comparison AS (
+  SELECT
+    COALESCE(curr.product_name, prev.product_name) AS product_name,
+    COALESCE(curr.display_name, prev.display_name) AS display_name,
+    COALESCE(curr.rate_pct, prev.rate_pct) AS rate_pct,
+    COALESCE(curr.profile_type, prev.profile_type) AS profile_type,
+    COALESCE(curr.hierarchy_id, prev.hierarchy_id) AS hierarchy_id,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr.revenue_amount, 0) AS current_revenue_amount,
+    COALESCE(curr.entities_with_activity, 0) AS current_entities_with_activity,
+    COALESCE(prev.entities_with_activity, 0) AS previous_entities_with_activity
+  FROM product_hierarchy_txns_current curr
+  FULL OUTER JOIN product_hierarchy_txns_previous prev
+    ON curr.product_name = prev.product_name
+    AND curr.hierarchy_id IS NOT DISTINCT FROM prev.hierarchy_id
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  hpc.product_name,
+  hpc.display_name,
+  hpc.rate_pct,
+  hpc.profile_type,
+  hpc.previous_entities_with_activity,
+  hpc.current_entities_with_activity,
+  hpc.previous_txn_count,
+  hpc.current_txn_count,
+  hpc.current_txn_count - hpc.previous_txn_count AS txn_count_change,
+  hpc.previous_transaction_volume,
+  hpc.current_transaction_volume,
+  hpc.current_transaction_volume - hpc.previous_transaction_volume AS transaction_volume_change,
+  hpc.previous_revenue_amount,
+  hpc.current_revenue_amount,
+  hpc.current_revenue_amount - hpc.previous_revenue_amount AS revenue_change
+FROM hierarchy_product_comparison hpc
+CROSS JOIN period_bounds pb
+LEFT JOIN hierarchies_deduped bh ON bh.id = hpc.hierarchy_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+ORDER BY
+  hpc.product_name,
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  hpc.current_revenue_amount DESC NULLS LAST
+) h
+GROUP BY h.hierarchy_name
+ORDER BY current_revenue_amount DESC NULLS LAST
+LIMIT 12
+
+================================================================================
+QUERY 12: Dashboard Table — Top Agents by Commission
+Based on: Monthly Commission — by user
+Description: Top 10 agents by commission released in the current period. Mirrors “Top Performing Agents” table on the main dashboard.
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: AGENT
+Layout: Row 3 · w=8 h=5 · summary table
+Max rows (dashboard table): 10
+Drilldown report (not on dashboard): Monthly Commission — detail
+
+SQL:
+SELECT
+  c.user_name,
+  c.entity_name,
+  c.hierarchy_name,
+  c.current_release_count,
+  c.total_current_released,
+  c.release_change
+FROM (
+WITH 
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+release_txs_current AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+release_txs_previous AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  CROSS JOIN period_bounds pb
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= pb.previous_period_start::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+user_releases_current AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_current
+  GROUP BY 1, 2, 3, 4
+),
+user_releases_previous AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_previous
+  GROUP BY 1, 2, 3, 4
+),
+period_releases AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.service_id, p.service_id) AS service_id,
+    COALESCE(c.product_id, p.product_id) AS product_id,
+    COALESCE(p.release_count, 0) AS previous_release_count,
+    COALESCE(c.release_count, 0) AS current_release_count,
+    COALESCE(p.total_released, 0) AS total_previous_released,
+    COALESCE(c.total_released, 0) AS total_current_released
+  FROM user_releases_current c
+  FULL OUTER JOIN user_releases_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.service_id = p.service_id
+    AND c.product_id = p.product_id
+),
+
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.mobile,
+    au.id AS agent_profile_id,
+    au.user_id,
+    au.entity_id AS agent_entity_id,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS profile_name
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+),
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+)
+
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  COALESCE(s.display_name, s.name) AS service_name,
+  s.service_type,
+  COALESCE(p.display_name, p.name) AS product_name,
+  abm.user_id,
+  abm.agent_profile_id,
+  pr.user_identifier,
+  COALESCE(abm.profile_name, pr.user_identifier) AS user_name,
+  pr.previous_release_count,
+  pr.current_release_count,
+  pr.total_previous_released,
+  pr.total_current_released,
+  pr.total_current_released - pr.total_previous_released AS release_change
+FROM period_releases pr
+CROSS JOIN period_bounds pb
+LEFT JOIN agent_by_mobile abm ON abm.mobile = pr.user_identifier
+LEFT JOIN entities_deduped e ON e.id = COALESCE(abm.agent_entity_id, pr.entity_id)
+LEFT JOIN services_deduped s ON s.id = pr.service_id
+LEFT JOIN products_deduped p ON p.id = pr.product_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = abm.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id
+  LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+  [[AND e.name = :entityName?]]
+  [[AND abm.user_id = :userId?]]
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  pr.total_current_released DESC
+) c
+ORDER BY c.total_current_released DESC NULLS LAST
+LIMIT 10
+
+================================================================================
+QUERY 13: Dashboard Table — Top Daily Commission Agents
+Based on: Daily Commission — by user
+Description: Top 10 agents by daily commission releases in the current period.
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: AGENT
+Layout: Row 3 alt · w=8 h=5
+Max rows (dashboard table): 10
+Drilldown report (not on dashboard): Daily Commission — detail
+
+SQL:
+SELECT
+  c.user_name,
+  c.entity_name,
+  c.current_release_count,
+  c.total_current_released,
+  c.release_change
+FROM (
+WITH 
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+release_txs_current AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 51
+    AND t.service_id = 17
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+release_txs_previous AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  CROSS JOIN period_bounds pb
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 51
+    AND t.service_id = 17
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= pb.previous_period_start::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+user_releases_current AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_current
+  GROUP BY 1, 2, 3, 4
+),
+user_releases_previous AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_previous
+  GROUP BY 1, 2, 3, 4
+),
+period_releases AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.service_id, p.service_id) AS service_id,
+    COALESCE(c.product_id, p.product_id) AS product_id,
+    COALESCE(p.release_count, 0) AS previous_release_count,
+    COALESCE(c.release_count, 0) AS current_release_count,
+    COALESCE(p.total_released, 0) AS total_previous_released,
+    COALESCE(c.total_released, 0) AS total_current_released
+  FROM user_releases_current c
+  FULL OUTER JOIN user_releases_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.service_id = p.service_id
+    AND c.product_id = p.product_id
+),
+
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.mobile,
+    au.id AS agent_profile_id,
+    au.user_id,
+    au.entity_id AS agent_entity_id,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS profile_name
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+),
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+)
+
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  COALESCE(s.display_name, s.name) AS service_name,
+  s.service_type,
+  COALESCE(p.display_name, p.name) AS product_name,
+  abm.user_id,
+  abm.agent_profile_id,
+  pr.user_identifier,
+  COALESCE(abm.profile_name, pr.user_identifier) AS user_name,
+  pr.previous_release_count,
+  pr.current_release_count,
+  pr.total_previous_released,
+  pr.total_current_released,
+  pr.total_current_released - pr.total_previous_released AS release_change
+FROM period_releases pr
+CROSS JOIN period_bounds pb
+LEFT JOIN agent_by_mobile abm ON abm.mobile = pr.user_identifier
+LEFT JOIN entities_deduped e ON e.id = COALESCE(abm.agent_entity_id, pr.entity_id)
+LEFT JOIN services_deduped s ON s.id = pr.service_id
+LEFT JOIN products_deduped p ON p.id = pr.product_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = abm.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id
+  LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+  [[AND e.name = :entityName?]]
+  [[AND abm.user_id = :userId?]]
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  pr.total_current_released DESC
+) c
+ORDER BY c.total_current_released DESC NULLS LAST
+LIMIT 10
+
+================================================================================
+QUERY 14: Dashboard Table — Commission Rollup by Entity
+Based on: Monthly Commission — rollup
+Description: Entity-level commission totals with period comparison (≤15 rows on canvas).
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: AGENT
+Layout: Row 3 alt · w=8 h=5
+Max rows (dashboard table): 15
+
+SQL:
+SELECT
+  c.entity_name,
+  c.hierarchy_name,
+  c.users_with_releases,
+  c.current_release_count,
+  c.total_current_released,
+  c.release_change
+FROM (
+WITH 
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+release_txs_current AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+release_txs_previous AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  CROSS JOIN period_bounds pb
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= pb.previous_period_start::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+user_releases_current AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_current
+  GROUP BY 1, 2, 3, 4
+),
+user_releases_previous AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_previous
+  GROUP BY 1, 2, 3, 4
+),
+period_releases AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.service_id, p.service_id) AS service_id,
+    COALESCE(c.product_id, p.product_id) AS product_id,
+    COALESCE(p.release_count, 0) AS previous_release_count,
+    COALESCE(c.release_count, 0) AS current_release_count,
+    COALESCE(p.total_released, 0) AS total_previous_released,
+    COALESCE(c.total_released, 0) AS total_current_released
+  FROM user_releases_current c
+  FULL OUTER JOIN user_releases_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.service_id = p.service_id
+    AND c.product_id = p.product_id
+),
+
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.mobile,
+    au.id AS agent_profile_id,
+    au.user_id,
+    au.entity_id AS agent_entity_id,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS profile_name
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+),
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+)
+
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  COALESCE(s.display_name, s.name) AS service_name,
+  COALESCE(p.display_name, p.name) AS product_name,
+  COUNT(DISTINCT abm.user_id) AS users_with_releases,
+  SUM(pr.previous_release_count)::int AS previous_release_count,
+  SUM(pr.current_release_count)::int AS current_release_count,
+  SUM(pr.total_previous_released) AS total_previous_released,
+  SUM(pr.total_current_released) AS total_current_released,
+  SUM(pr.total_current_released) - SUM(pr.total_previous_released) AS release_change
+FROM period_releases pr
+CROSS JOIN period_bounds pb
+LEFT JOIN agent_by_mobile abm ON abm.mobile = pr.user_identifier
+LEFT JOIN entities_deduped e ON e.id = COALESCE(abm.agent_entity_id, pr.entity_id)
+LEFT JOIN services_deduped s ON s.id = pr.service_id
+LEFT JOIN products_deduped p ON p.id = pr.product_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = abm.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE 1 = 1
+  
+GROUP BY
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  bh.name,
+  pe.name,
+  e.name,
+  e.entity_category,
+  s.display_name,
+  s.name,
+  p.display_name,
+  p.name
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  total_current_released DESC
+) c
+ORDER BY c.total_current_released DESC NULLS LAST
+LIMIT 15
+
+================================================================================
+QUERY 15: Dashboard Table — Top Merchant Entities by Product Revenue
+Based on: [Product] - Summary by entity — period comparison
+Description: Top merchant/enterprise entities by current-period product revenue.
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: OPERATIONAL
+Layout: Row 3 alt · w=8 h=5
+Max rows (dashboard table): 15
+
+SQL:
+SELECT
+  e.entity_name,
+  e.product_name,
+  e.current_txn_count,
+  e.current_transaction_volume,
+  e.current_revenue_amount,
+  e.revenue_change
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+merchant_by_mobile AS (
+  SELECT DISTINCT ON (mu.mobile, mu.entity_id)
+    mu.mobile,
+    mu.user_id,
+    mu.entity_id,
+    COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      mu.full_name,
+      NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), '')
+    ) AS profile_name
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL
+    AND mu.mobile IS NOT NULL
+  ORDER BY mu.mobile, mu.entity_id, mu.id DESC
+),
+enterprise_by_mobile AS (
+  SELECT DISTINCT ON (eu.mobile, eu.entity_id)
+    eu.mobile,
+    eu.user_id,
+    eu.entity_id,
+    COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      eu.full_name,
+      NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), '')
+    ) AS profile_name
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL
+    AND eu.mobile IS NOT NULL
+  ORDER BY eu.mobile, eu.entity_id, eu.id DESC
+),
+target_products AS (
+  SELECT
+    p.id,
+    p.name,
+    COALESCE(p.display_name, p.name) AS display_name,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.009
+      ELSE 0.008
+    END AS revenue_rate,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      ELSE 0.8
+    END AS rate_pct,
+    CASE
+      WHEN p.name IN ('APS PAY', 'Ticket') THEN 'merchant'::text
+      WHEN p.name = 'Disbursement' THEN 'enterprise'::text
+    END AS profile_type
+  FROM products_deduped p
+  WHERE p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+product_txns_current AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_current
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_current AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_current
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_txns_previous AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_previous AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_previous
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_entity_txns_current AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(pt.transaction_volume) AS transaction_volume,
+    SUM(pt.revenue_amount) AS revenue_amount
+  FROM product_txns_current pt
+  GROUP BY pt.product_name, pt.display_name, pt.rate_pct, pt.profile_type, pt.entity_id
+),
+product_entity_txns_previous AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(pt.transaction_volume) AS transaction_volume,
+    SUM(pt.revenue_amount) AS revenue_amount
+  FROM product_txns_previous pt
+  GROUP BY pt.product_name, pt.display_name, pt.rate_pct, pt.profile_type, pt.entity_id
+),
+entity_product_comparison AS (
+  SELECT
+    COALESCE(curr.product_name, prev.product_name) AS product_name,
+    COALESCE(curr.display_name, prev.display_name) AS display_name,
+    COALESCE(curr.rate_pct, prev.rate_pct) AS rate_pct,
+    COALESCE(curr.profile_type, prev.profile_type) AS profile_type,
+    COALESCE(curr.entity_id, prev.entity_id) AS entity_id,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr.revenue_amount, 0) AS current_revenue_amount
+  FROM product_entity_txns_current curr
+  FULL OUTER JOIN product_entity_txns_previous prev
+    ON curr.product_name = prev.product_name
+    AND curr.entity_id = prev.entity_id
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  epc.product_name,
+  epc.display_name,
+  epc.rate_pct,
+  epc.profile_type,
+  epc.previous_txn_count,
+  epc.current_txn_count,
+  epc.current_txn_count - epc.previous_txn_count AS txn_count_change,
+  epc.previous_transaction_volume,
+  epc.current_transaction_volume,
+  epc.current_transaction_volume - epc.previous_transaction_volume AS transaction_volume_change,
+  epc.previous_revenue_amount,
+  epc.current_revenue_amount,
+  epc.current_revenue_amount - epc.previous_revenue_amount AS revenue_change
+FROM entity_product_comparison epc
+CROSS JOIN period_bounds pb
+LEFT JOIN entities_deduped e ON e.id = epc.entity_id
+LEFT JOIN LATERAL (
+  SELECT bhe.business_hierarchy_id, bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.entity_id = e.id
+  ORDER BY bhe.id
+  LIMIT 1
+) bhe ON true
+LEFT JOIN hierarchies_deduped bh ON bh.id = bhe.business_hierarchy_id
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+ORDER BY
+  epc.product_name,
+  epc.current_revenue_amount DESC NULLS LAST,
+  e.name
+) e
+ORDER BY e.current_revenue_amount DESC NULLS LAST
+LIMIT 15
+
+================================================================================
+QUERY 16: Dashboard Table — Inactive Entity Users (Summary)
+Based on: [Product] - Inactive entity users — period comparison
+Description: Users with zero product activity in the current period. Capped for dashboard table widget.
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: OPERATIONAL
+Layout: Row 3 alt · w=8 h=5
+Max rows (dashboard table): 15
+
+SQL:
+SELECT
+  i.entity_name,
+  i.user_name,
+  i.product_name,
+  i.previous_txn_count,
+  i.previous_transaction_volume
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+merchant_by_mobile AS (
+  SELECT DISTINCT ON (mu.mobile, mu.entity_id)
+    mu.mobile,
+    mu.user_id,
+    mu.entity_id,
+    COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      mu.full_name,
+      NULLIF(TRIM(COALESCE(mu.firstname, '') || ' ' || COALESCE(mu.lastname, '')), '')
+    ) AS profile_name
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL
+    AND mu.mobile IS NOT NULL
+  ORDER BY mu.mobile, mu.entity_id, mu.id DESC
+),
+enterprise_by_mobile AS (
+  SELECT DISTINCT ON (eu.mobile, eu.entity_id)
+    eu.mobile,
+    eu.user_id,
+    eu.entity_id,
+    COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      eu.full_name,
+      NULLIF(TRIM(COALESCE(eu.firstname, '') || ' ' || COALESCE(eu.lastname, '')), '')
+    ) AS profile_name
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL
+    AND eu.mobile IS NOT NULL
+  ORDER BY eu.mobile, eu.entity_id, eu.id DESC
+),
+target_products AS (
+  SELECT
+    p.id,
+    p.name,
+    COALESCE(p.display_name, p.name) AS display_name,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.009
+      ELSE 0.008
+    END AS revenue_rate,
+    CASE
+      WHEN p.name = 'Disbursement' THEN 0.9
+      ELSE 0.8
+    END AS rate_pct,
+    CASE
+      WHEN p.name IN ('APS PAY', 'Ticket') THEN 'merchant'::text
+      WHEN p.name = 'Disbursement' THEN 'enterprise'::text
+    END AS profile_type
+  FROM products_deduped p
+  WHERE p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+product_txns_current AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_current
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_current AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_current
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+product_txns_previous AS (
+  SELECT
+    p.name AS product_name,
+    tp.display_name,
+    tp.rate_pct,
+    tp.revenue_rate,
+    tp.profile_type,
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    t.transaction_amount::numeric AS transaction_volume,
+    ROUND(t.transaction_amount::numeric * tp.revenue_rate, 2) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  JOIN target_products tp ON tp.name = p.name
+  WHERE t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+    
+    AND p.name IN ('APS PAY', 'Disbursement', 'Ticket')
+    AND t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND (
+      (
+        p.name IN ('APS PAY', 'Ticket')
+        AND t.transaction_type = 'CR'
+        AND e.entity_category = 'MERCHANT'
+      )
+      OR (
+        p.name = 'Disbursement'
+        AND t.transaction_type = 'DR'
+        AND e.entity_category = 'ENTERPRISE'
+      )
+    )
+),
+product_summary_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type
+),
+user_product_txns_previous AS (
+  SELECT
+    product_name,
+    user_identifier,
+    entity_id,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM product_txns_previous
+  WHERE user_identifier IS NOT NULL
+  GROUP BY product_name, user_identifier, entity_id
+),
+
+entity_product_users AS (
+  SELECT
+    tp.name AS product_name,
+    tp.display_name,
+    tp.profile_type,
+    mbm.mobile AS user_identifier,
+    mbm.user_id,
+    mbm.entity_id,
+    mbm.hierarchy_id,
+    mbm.profile_name
+  FROM target_products tp
+  JOIN merchant_by_mobile mbm ON tp.profile_type = 'merchant'
+  JOIN entities_deduped e ON e.id = mbm.entity_id AND e.entity_category = 'MERCHANT'
+  WHERE tp.name IN ('APS PAY', 'Ticket')
+  UNION ALL
+  SELECT
+    tp.name AS product_name,
+    tp.display_name,
+    tp.profile_type,
+    ebm.mobile AS user_identifier,
+    ebm.user_id,
+    ebm.entity_id,
+    ebm.hierarchy_id,
+    ebm.profile_name
+  FROM target_products tp
+  JOIN enterprise_by_mobile ebm ON tp.profile_type = 'enterprise'
+  JOIN entities_deduped e ON e.id = ebm.entity_id AND e.entity_category = 'ENTERPRISE'
+  WHERE tp.name = 'Disbursement'
+),
+user_product_activity AS (
+  SELECT
+    epu.product_name,
+    epu.display_name,
+    epu.profile_type,
+    epu.user_id,
+    epu.user_identifier,
+    epu.entity_id,
+    epu.hierarchy_id,
+    epu.profile_name,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume
+  FROM entity_product_users epu
+  LEFT JOIN user_product_txns_previous prev
+    ON prev.product_name = epu.product_name
+    AND prev.user_identifier = epu.user_identifier
+    AND prev.entity_id = epu.entity_id
+  LEFT JOIN user_product_txns_current curr
+    ON curr.product_name = epu.product_name
+    AND curr.user_identifier = epu.user_identifier
+    AND curr.entity_id = epu.entity_id
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  upa.product_name,
+  upa.display_name,
+  upa.profile_type,
+  upa.user_id,
+  upa.user_identifier,
+  COALESCE(upa.profile_name, upa.user_identifier) AS user_name,
+  upa.previous_txn_count,
+  upa.current_txn_count,
+  upa.previous_transaction_volume,
+  upa.current_transaction_volume,
+  upa.previous_txn_count - upa.current_txn_count AS txn_count_drop
+FROM user_product_activity upa
+CROSS JOIN period_bounds pb
+LEFT JOIN entities_deduped e ON e.id = upa.entity_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = upa.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id
+  LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE upa.current_txn_count = 0
+  [[AND upa.product_name = :productName?]]
+  [[AND e.name = :entityName?]]
+  [[AND bh.name = :hierarchyName?]]
+ORDER BY
+  upa.product_name,
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  upa.previous_txn_count DESC,
+  upa.user_identifier
+) i
+ORDER BY i.previous_transaction_volume DESC NULLS LAST
+LIMIT 15
+
+================================================================================
+QUERY 17: Dashboard Table — Hierarchy Product Rollup (Summary)
+Based on: [Hierarchy] - Products by hierarchy — period comparison
+Description: Hierarchy × product metrics aggregated for dashboard table (top 15 by revenue).
+Widget: TABLE_ONLY
+Suggested visualization: TABLE_ONLY
+Category: OPERATIONAL
+Layout: Row 3 alt · w=12 h=5
+Max rows (dashboard table): 15
+
+SQL:
+SELECT
+  h.hierarchy_name,
+  h.product_display_name,
+  h.current_txn_count,
+  h.current_transaction_volume,
+  h.current_revenue_amount,
+  h.revenue_change
+FROM (
+WITH 
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+global_fees_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Global Fees Income' LIMIT 1
+),
+customer_entity AS (
+  SELECT id FROM entities_deduped WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_deduped WHERE name = 'Customer' LIMIT 1
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+pouches_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name
+  FROM pouches p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+),
+emoney_pouch AS (
+  SELECT id FROM pouches_deduped WHERE name = 'EMoney' LIMIT 1
+),
+
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+
+entity_txn_volumes_current AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  GROUP BY t.transaction_id, e.id, p.name, p.display_name
+),
+activity_with_hierarchy_current AS (
+  SELECT
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_current etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_product_activity_current AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM activity_with_hierarchy_current
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+intouch_moov_recorded_products_current AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+recorded_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    COALESCE(
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_name,
+    COALESCE(
+      p.display_name,
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_display_name,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+calculated_fee_lines_current AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    p.name AS product_name,
+    COALESCE(p.display_name, p.name) AS product_display_name,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_current rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+
+revenue_lines_current AS (
+  SELECT * FROM recorded_fee_lines_current
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_current
+),
+revenue_with_hierarchy_current AS (
+  SELECT
+    rl.product_name,
+    rl.product_display_name,
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_current rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_product_revenue_current AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_current
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+entity_txn_volumes_previous AS (
+  SELECT
+    t.transaction_id,
+    e.id AS entity_id,
+    COALESCE(p.name, '(No product)') AS product_name,
+    COALESCE(p.display_name, p.name, '(No product)') AS product_display_name,
+    MAX(t.user_identifier) AS user_identifier,
+    MAX(t.transaction_amount::numeric) AS transaction_volume
+  FROM transactions t
+  JOIN entities_deduped e ON e.id = t.entity_id
+  JOIN emoney_pouch ep ON ep.id = t.pouch_id
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_id IS NOT NULL
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  GROUP BY t.transaction_id, e.id, p.name, p.display_name
+),
+activity_with_hierarchy_previous AS (
+  SELECT
+    etv.product_name,
+    etv.product_display_name,
+    etv.transaction_volume,
+    
+    CASE
+      WHEN etv.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM entity_txn_volumes_previous etv
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = etv.user_identifier
+),
+hierarchy_product_activity_previous AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume
+  FROM activity_with_hierarchy_previous
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+
+intouch_moov_recorded_products_previous AS (
+  SELECT DISTINCT TRIM(
+    regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1')
+  ) AS product_name
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%FEE of%'
+    AND (
+      t.remarks ILIKE '%INTOUCH%'
+      OR t.remarks ILIKE '%Moov%'
+      OR t.remarks ILIKE '%MOOV%'
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+recorded_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    COALESCE(
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_name,
+    COALESCE(
+      p.display_name,
+      p.name,
+      CASE
+        WHEN t.remarks ~* '^You have received .+ FEE of '
+          THEN TRIM(regexp_replace(t.remarks, '^You have received (.+) FEE of .*', '\1'))
+        ELSE '(Recorded fee)'
+      END
+    ) AS product_display_name,
+    t.transaction_amount::numeric AS revenue_amount
+  FROM transactions t
+  CROSS JOIN global_fees_entity gfe
+  LEFT JOIN products_deduped p ON p.id = t.product_id
+  WHERE t.deleted_at IS NULL
+    AND t.entity_id = gfe.id
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.remarks ILIKE 'You have received%'
+    AND (
+      t.remarks ILIKE '%Internal Wallet Transfer FEE%'
+      OR t.remarks ILIKE '%International Remittance COMMISSION%'
+      OR t.remarks ILIKE '%BANK_TO_WALLET_TRANSFER FEE%'
+      OR t.remarks ILIKE '%WALLET_TO_BANK_TRANSFER FEE%'
+      OR t.remarks ILIKE '%INTOUCH%FEE%'
+      OR t.remarks ILIKE '%Moov%FEE%'
+      OR t.remarks ILIKE '%MOOV%FEE%'
+      OR t.remarks ~* '^You have received .+ FEE of '
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+calculated_fee_lines_previous AS (
+  SELECT
+    t.id AS transaction_row_id,
+    t.user_identifier,
+    t.entity_id,
+    p.name AS product_name,
+    COALESCE(p.display_name, p.name) AS product_display_name,
+    ROUND(
+      t.transaction_amount::numeric * CASE
+        WHEN p.name = 'Disbursement' THEN 0.009
+        WHEN s.name = 'Airtime Topup' THEN 0.05
+        WHEN p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%' THEN 0.01
+        WHEN p.name = 'APS PAY' THEN 0.008
+      END,
+      2
+    ) AS revenue_amount
+  FROM transactions t
+  JOIN products_deduped p ON p.id = t.product_id
+  LEFT JOIN services_deduped s ON s.id = t.service_id
+  WHERE t.deleted_at IS NULL
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'DR'
+    AND (
+      p.name = 'Disbursement'
+      OR s.name = 'Airtime Topup'
+      OR p.name ILIKE '%intouch%'
+      OR p.name ILIKE '%moov%'
+      OR p.name = 'APS PAY'
+    )
+    AND NOT (
+      (p.name ILIKE '%intouch%' OR p.name ILIKE '%moov%')
+      AND EXISTS (
+        SELECT 1
+        FROM intouch_moov_recorded_products_previous rp
+        WHERE rp.product_name = p.name
+      )
+    )
+    AND t.created_at >= (SELECT previous_period_start FROM period_bounds)::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+
+revenue_lines_previous AS (
+  SELECT * FROM recorded_fee_lines_previous
+  UNION ALL
+  SELECT * FROM calculated_fee_lines_previous
+),
+revenue_with_hierarchy_previous AS (
+  SELECT
+    rl.product_name,
+    rl.product_display_name,
+    rl.revenue_amount,
+    CASE
+      WHEN rl.entity_id = gfe.id THEN NULL::bigint
+      WHEN rl.entity_id = ce.id THEN ch.id
+      ELSE uc.hierarchy_id
+    END AS hierarchy_id
+  FROM revenue_lines_previous rl
+  CROSS JOIN global_fees_entity gfe
+  CROSS JOIN customer_entity ce
+  CROSS JOIN customer_hierarchy ch
+  LEFT JOIN user_ctx uc ON uc.mobile = rl.user_identifier
+),
+hierarchy_product_revenue_previous AS (
+  SELECT
+    hierarchy_id,
+    product_name,
+    product_display_name,
+    SUM(revenue_amount) AS revenue_amount
+  FROM revenue_with_hierarchy_previous
+  GROUP BY hierarchy_id, product_name, product_display_name
+),
+hierarchy_product_keys AS (
+  SELECT hierarchy_id, product_name FROM hierarchy_product_activity_current
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_activity_previous
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_revenue_current
+  UNION
+  SELECT hierarchy_id, product_name FROM hierarchy_product_revenue_previous
+),
+hierarchy_product_comparison AS (
+  SELECT
+    k.hierarchy_id,
+    k.product_name,
+    COALESCE(
+      curr.product_display_name,
+      prev.product_display_name,
+      curr_rev.product_display_name,
+      prev_rev.product_display_name,
+      k.product_name
+    ) AS product_display_name,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev_rev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr_rev.revenue_amount, 0) AS current_revenue_amount
+  FROM hierarchy_product_keys k
+  LEFT JOIN hierarchy_product_activity_current curr
+    ON curr.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND curr.product_name = k.product_name
+  LEFT JOIN hierarchy_product_activity_previous prev
+    ON prev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND prev.product_name = k.product_name
+  LEFT JOIN hierarchy_product_revenue_current curr_rev
+    ON curr_rev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND curr_rev.product_name = k.product_name
+  LEFT JOIN hierarchy_product_revenue_previous prev_rev
+    ON prev_rev.hierarchy_id IS NOT DISTINCT FROM k.hierarchy_id
+    AND prev_rev.product_name = k.product_name
+)
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  hpc.product_name,
+  hpc.product_display_name,
+  hpc.previous_txn_count,
+  hpc.current_txn_count,
+  hpc.current_txn_count - hpc.previous_txn_count AS txn_count_change,
+  hpc.previous_transaction_volume,
+  hpc.current_transaction_volume,
+  hpc.current_transaction_volume - hpc.previous_transaction_volume AS transaction_volume_change,
+  hpc.previous_revenue_amount,
+  hpc.current_revenue_amount,
+  hpc.current_revenue_amount - hpc.previous_revenue_amount AS revenue_change
+FROM hierarchy_product_comparison hpc
+CROSS JOIN period_bounds pb
+LEFT JOIN hierarchies_deduped bh ON bh.id = hpc.hierarchy_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+  [[AND hpc.product_name = :productName?]]
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  hpc.current_revenue_amount DESC NULLS LAST,
+  hpc.current_transaction_volume DESC NULLS LAST,
+  hpc.product_name
+) h
+ORDER BY h.current_revenue_amount DESC NULLS LAST
+LIMIT 15
+
+================================================================================
+QUERY 18: Dashboard KPI — Total Commission Released
+Based on: Monthly Commission — rollup
+Description: Single metric: total monthly commission released in the current period.
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: AGENT
+Layout: KPI strip · w=3 h=2
+KPI valueColumn: total_commission_released (Commission Released)
+
+SQL:
+SELECT SUM(c.total_current_released) AS total_commission_released
+FROM (
+WITH 
+period_bounds AS (
+  SELECT
+    CAST(:dateFrom AS date) AS period_start,
+    CAST(:dateTo AS date) AS period_end,
+    (
+      CAST(:dateFrom AS date)
+      - ((CAST(:dateTo AS date) - CAST(:dateFrom AS date)) + 1) * interval '1 day'
+    )::date AS previous_period_start,
+    (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_period_end
+),
+release_txs_current AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= CAST(:dateFrom AS timestamp)
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+),
+release_txs_previous AS (
+  SELECT
+    t.id,
+    t.user_identifier,
+    t.entity_id,
+    t.service_id,
+    t.product_id,
+    t.transaction_amount::numeric AS amount,
+    t.created_at
+  FROM transactions t
+  CROSS JOIN period_bounds pb
+  WHERE t.deleted_at IS NULL
+    AND t.product_id = 21
+    AND t.service_id = 11
+    AND t.status = 'SUCCESS'
+    AND t.transaction_type = 'CR'
+    AND t.created_at >= pb.previous_period_start::timestamp
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+),
+user_releases_current AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_current
+  GROUP BY 1, 2, 3, 4
+),
+user_releases_previous AS (
+  SELECT
+    user_identifier,
+    entity_id,
+    service_id,
+    product_id,
+    COUNT(*)::int AS release_count,
+    SUM(amount) AS total_released
+  FROM release_txs_previous
+  GROUP BY 1, 2, 3, 4
+),
+period_releases AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.service_id, p.service_id) AS service_id,
+    COALESCE(c.product_id, p.product_id) AS product_id,
+    COALESCE(p.release_count, 0) AS previous_release_count,
+    COALESCE(c.release_count, 0) AS current_release_count,
+    COALESCE(p.total_released, 0) AS total_previous_released,
+    COALESCE(c.total_released, 0) AS total_current_released
+  FROM user_releases_current c
+  FULL OUTER JOIN user_releases_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.service_id = p.service_id
+    AND c.product_id = p.product_id
+),
+
+agent_by_mobile AS (
+  SELECT DISTINCT ON (au.mobile)
+    au.mobile,
+    au.id AS agent_profile_id,
+    au.user_id,
+    au.entity_id AS agent_entity_id,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id,
+    COALESCE(
+      au.full_name,
+      NULLIF(TRIM(COALESCE(au.firstname, '') || ' ' || COALESCE(au.lastname, '')), '')
+    ) AS profile_name
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL
+    AND au.mobile IS NOT NULL
+  ORDER BY au.mobile, au.id DESC
+),
+entities_deduped AS (
+  SELECT DISTINCT ON (e.id) e.id, e.name, e.entity_category
+  FROM entities e
+  WHERE e.deleted_at IS NULL
+  ORDER BY e.id
+),
+hierarchies_deduped AS (
+  SELECT DISTINCT ON (bh.id) bh.id, bh.name
+  FROM business_hierarchies bh
+  WHERE bh.deleted_at IS NULL
+  ORDER BY bh.id
+),
+services_deduped AS (
+  SELECT DISTINCT ON (s.id) s.id, s.name, s.display_name, s.service_type
+  FROM services s
+  WHERE s.deleted_at IS NULL
+  ORDER BY s.id
+),
+products_deduped AS (
+  SELECT DISTINCT ON (p.id) p.id, p.name, p.display_name
+  FROM products p
+  WHERE p.deleted_at IS NULL
+  ORDER BY p.id
+)
+
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  COALESCE(pe.name, '(Root)') AS parent_entity_name,
+  COALESCE(e.name, 'Unassigned') AS entity_name,
+  e.entity_category,
+  COALESCE(s.display_name, s.name) AS service_name,
+  COALESCE(p.display_name, p.name) AS product_name,
+  COUNT(DISTINCT abm.user_id) AS users_with_releases,
+  SUM(pr.previous_release_count)::int AS previous_release_count,
+  SUM(pr.current_release_count)::int AS current_release_count,
+  SUM(pr.total_previous_released) AS total_previous_released,
+  SUM(pr.total_current_released) AS total_current_released,
+  SUM(pr.total_current_released) - SUM(pr.total_previous_released) AS release_change
+FROM period_releases pr
+CROSS JOIN period_bounds pb
+LEFT JOIN agent_by_mobile abm ON abm.mobile = pr.user_identifier
+LEFT JOIN entities_deduped e ON e.id = COALESCE(abm.agent_entity_id, pr.entity_id)
+LEFT JOIN services_deduped s ON s.id = pr.service_id
+LEFT JOIN products_deduped p ON p.id = pr.product_id
+LEFT JOIN hierarchies_deduped bh ON bh.id = abm.hierarchy_id
+LEFT JOIN LATERAL (
+  SELECT bhe.parent_entity_id
+  FROM business_hierarchy_entities bhe
+  WHERE bhe.business_hierarchy_id = bh.id
+    AND bhe.entity_id = e.id
+  ORDER BY bhe.id LIMIT 1
+) bhe ON true
+LEFT JOIN entities_deduped pe ON pe.id = bhe.parent_entity_id
+WHERE 1 = 1
+  
+GROUP BY
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  bh.name,
+  pe.name,
+  e.name,
+  e.entity_category,
+  s.display_name,
+  s.name,
+  p.display_name,
+  p.name
+ORDER BY
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  e.name,
+  total_current_released DESC
+) c
+
+================================================================================
+QUERY 19: Dashboard KPI — Balance Change
+Based on: Entity Balance Summary
+Description: Single metric: net change in system float between previous and current as-at dates, excluding the Bank entity.
+Widget: KPI
+Suggested visualization: TABLE_ONLY
+Category: BALANCE
+Layout: KPI strip · w=3 h=2
+KPI valueColumn: balance_change (Balance Change)
+
+SQL:
+SELECT SUM(b.balance_change) AS balance_change
+FROM (
+WITH entities_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM entities
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+hierarchies_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM business_hierarchies
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+pouches_d AS (
+  SELECT DISTINCT ON (id) id, name
+  FROM pouches
+  WHERE deleted_at IS NULL
+  ORDER BY id
+),
+
+latest_balances_current AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateToExclusive AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+latest_balances_previous AS (
+  SELECT DISTINCT ON (t.user_identifier, t.entity_id, t.pouch_id)
+    t.user_identifier,
+    t.entity_id,
+    t.pouch_id,
+    t.after_balance::numeric AS latest_balance,
+    t.created_at AS balance_as_of
+  FROM transactions t
+  WHERE t.deleted_at IS NULL
+    AND t.after_balance IS NOT NULL
+    AND t.user_identifier IS NOT NULL
+    AND t.created_at < CAST(:dateFrom AS timestamp)
+  ORDER BY t.user_identifier, t.entity_id, t.pouch_id, t.created_at DESC, t.id DESC
+),
+period_balances AS (
+  SELECT
+    COALESCE(c.user_identifier, p.user_identifier) AS user_identifier,
+    COALESCE(c.entity_id, p.entity_id) AS entity_id,
+    COALESCE(c.pouch_id, p.pouch_id) AS pouch_id,
+    COALESCE(p.latest_balance, 0) AS previous_balance,
+    COALESCE(c.latest_balance, 0) AS current_balance,
+    p.balance_as_of AS previous_balance_as_of,
+    c.balance_as_of AS current_balance_as_of
+  FROM latest_balances_current c
+  FULL OUTER JOIN latest_balances_previous p
+    ON c.user_identifier = p.user_identifier
+    AND c.entity_id = p.entity_id
+    AND c.pouch_id = p.pouch_id
+),
+all_profiles AS (
+  SELECT
+    'agent'::text AS profile_type,
+    au.mobile,
+    u.status AS user_status,
+    COALESCE(au.business_hierarchy_id, u.business_hierarchy_id) AS hierarchy_id
+  FROM agent_users au
+  LEFT JOIN users u ON u.id = au.user_id
+  WHERE au.deleted_at IS NULL AND au.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'customer', cu.mobile, u.status, u.business_hierarchy_id
+  FROM customer_users cu
+  LEFT JOIN users u ON u.id = cu.user_id
+  WHERE cu.deleted_at IS NULL AND cu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'merchant', mu.mobile, u.status, COALESCE(mu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM merchant_users mu
+  LEFT JOIN users u ON u.id = mu.user_id
+  WHERE mu.deleted_at IS NULL AND mu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'enterprise', eu.mobile, u.status, COALESCE(eu.business_hierarchy_id, u.business_hierarchy_id)
+  FROM enterprise_users eu
+  LEFT JOIN users u ON u.id = eu.user_id
+  WHERE eu.deleted_at IS NULL AND eu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'vendor', vu.mobile, u.status, u.business_hierarchy_id
+  FROM vendor_users vu
+  LEFT JOIN users u ON u.id = vu.user_id
+  WHERE vu.deleted_at IS NULL AND vu.mobile IS NOT NULL
+  UNION ALL
+  SELECT 'operational', ou.mobile, u.status, u.business_hierarchy_id
+  FROM operational_users ou
+  LEFT JOIN users u ON u.id = ou.user_id
+  WHERE ou.deleted_at IS NULL AND ou.mobile IS NOT NULL
+),
+user_ctx AS (
+  SELECT DISTINCT ON (mobile)
+    mobile,
+    hierarchy_id
+  FROM all_profiles
+  ORDER BY mobile, 
+  CASE COALESCE(user_status, 'No user record')
+    WHEN 'Active' THEN 0
+    WHEN 'Registered' THEN 1
+    WHEN 'AwaitingApproval' THEN 2
+    WHEN 'InActive' THEN 3
+    WHEN 'Blocked' THEN 4
+    WHEN 'Terminated' THEN 5
+    ELSE 6
+  END,
+  CASE profile_type
+    WHEN 'customer' THEN 0
+    WHEN 'agent' THEN 1
+    WHEN 'merchant' THEN 2
+    WHEN 'enterprise' THEN 3
+    WHEN 'vendor' THEN 4
+    WHEN 'operational' THEN 5
+    ELSE 6
+  END
+
+),
+
+customer_entity AS (
+  SELECT id FROM entities_d WHERE name = 'Customer' LIMIT 1
+),
+customer_hierarchy AS (
+  SELECT id FROM hierarchies_d WHERE name = 'Customer' LIMIT 1
+)
+SELECT
+  :dateFrom AS period_start,
+  :dateTo AS period_end,
+  (CAST(:dateFrom AS date) - interval '1 day')::date AS previous_as_at_date,
+  CAST(:dateTo AS date) AS current_as_at_date,
+  COALESCE(h.name, 'Unassigned') AS hierarchy_name,
+  e.name AS entity_name,
+  p.name AS pouch_name,
+  l.pouch_id,
+  COUNT(*) AS user_count,
+  COUNT(*) FILTER (WHERE l.previous_balance = 0) AS zero_previous_balance_users,
+  COUNT(*) FILTER (WHERE l.current_balance = 0) AS zero_current_balance_users,
+  SUM(l.previous_balance) AS total_previous_balance,
+  SUM(l.current_balance) AS total_current_balance,
+  SUM(l.current_balance) - SUM(l.previous_balance) AS balance_change
+FROM period_balances l
+INNER JOIN entities_d e ON e.id = l.entity_id
+INNER JOIN pouches_d p ON p.id = l.pouch_id
+CROSS JOIN customer_entity ce
+CROSS JOIN customer_hierarchy ch
+LEFT JOIN user_ctx u ON u.mobile = l.user_identifier
+LEFT JOIN hierarchies_d h ON h.id = CASE WHEN l.entity_id = ce.id THEN ch.id ELSE u.hierarchy_id END
+GROUP BY h.name, e.name, p.name, l.pouch_id
+ORDER BY
+  CASE WHEN COALESCE(h.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(h.name, 'Unassigned'),
+  e.name,
+  p.name
+) b
+WHERE b.entity_name <> 'Bank'

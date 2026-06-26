@@ -1,7 +1,7 @@
 {
-  "name": "APS Wallet BI Reports",
-  "short_name": "APS BI",
-  "description": "Business intelligence dashboards and reporting for APS Wallet.",
+  "name": "PrixBI Reports",
+  "short_name": "PrixBI",
+  "description": "Business intelligence dashboards and reporting for PrixBI.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

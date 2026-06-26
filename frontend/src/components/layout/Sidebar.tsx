@@ -368,11 +368,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         <div className="flex h-16 items-center border-b border-white/10 px-6">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded bg-brand-gold text-lg font-bold text-sidebar">
-              A
+            <div className="flex h-8 min-w-8 items-center justify-center rounded bg-brand-gold px-1.5 text-sm font-bold text-sidebar">
+              Px
             </div>
             <span className="text-lg font-medium tracking-tight">
-              APS Wallet BI
+              PrixBI
             </span>
           </div>
         </div>

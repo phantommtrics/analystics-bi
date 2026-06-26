@@ -4,6 +4,7 @@ import { prisma } from '../src/prisma.ts'
 import { executeDataSourceQuery } from '../src/datasources/service.ts'
 import { applySqlFilters } from '../src/reports/sqlFilters.ts'
 import { publishSavedReport } from '../src/reports/service.ts'
+import { EMONEY_POUCH_DIM_CTES, EMONEY_POUCH_TXN_JOIN } from './report-sql-constants.ts'
 
 const TARGET_PRODUCTS = "('APS PAY', 'Disbursement', 'Ticket')" as const
 
@@ -77,7 +78,8 @@ target_products AS (
     END AS profile_type
   FROM products_deduped p
   WHERE p.name IN ${TARGET_PRODUCTS}
-)`
+),
+${EMONEY_POUCH_DIM_CTES}`
 
 const PERIOD_BOUNDS_COMPARISON = `
 period_bounds AS (
@@ -128,6 +130,7 @@ product_txns${suffix} AS (
   FROM transactions t
   JOIN products_deduped p ON p.id = t.product_id
   JOIN entities_deduped e ON e.id = t.entity_id
+  ${EMONEY_POUCH_TXN_JOIN}
   JOIN target_products tp ON tp.name = p.name
   WHERE t.created_at >= ${startExpr}
     AND t.created_at < ${endExclusiveExpr}
@@ -309,6 +312,135 @@ ORDER BY
   e.name
 `
 
+const HIERARCHY_PRODUCT_PERIOD_CTES = `
+product_txns_with_hierarchy_current AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    pt.transaction_volume,
+    pt.revenue_amount,
+    COALESCE(mbm.hierarchy_id, ebm.hierarchy_id) AS hierarchy_id
+  FROM product_txns_current pt
+  LEFT JOIN merchant_by_mobile mbm
+    ON pt.profile_type = 'merchant'
+    AND mbm.mobile = pt.user_identifier
+    AND mbm.entity_id = pt.entity_id
+  LEFT JOIN enterprise_by_mobile ebm
+    ON pt.profile_type = 'enterprise'
+    AND ebm.mobile = pt.user_identifier
+    AND ebm.entity_id = pt.entity_id
+),
+product_txns_with_hierarchy_previous AS (
+  SELECT
+    pt.product_name,
+    pt.display_name,
+    pt.rate_pct,
+    pt.profile_type,
+    pt.entity_id,
+    pt.transaction_volume,
+    pt.revenue_amount,
+    COALESCE(mbm.hierarchy_id, ebm.hierarchy_id) AS hierarchy_id
+  FROM product_txns_previous pt
+  LEFT JOIN merchant_by_mobile mbm
+    ON pt.profile_type = 'merchant'
+    AND mbm.mobile = pt.user_identifier
+    AND mbm.entity_id = pt.entity_id
+  LEFT JOIN enterprise_by_mobile ebm
+    ON pt.profile_type = 'enterprise'
+    AND ebm.mobile = pt.user_identifier
+    AND ebm.entity_id = pt.entity_id
+),
+product_hierarchy_txns_current AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    hierarchy_id,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_with_hierarchy_current
+  GROUP BY product_name, display_name, rate_pct, profile_type, hierarchy_id
+),
+product_hierarchy_txns_previous AS (
+  SELECT
+    product_name,
+    display_name,
+    rate_pct,
+    profile_type,
+    hierarchy_id,
+    COUNT(DISTINCT entity_id)::int AS entities_with_activity,
+    COUNT(*)::int AS txn_count,
+    SUM(transaction_volume) AS transaction_volume,
+    SUM(revenue_amount) AS revenue_amount
+  FROM product_txns_with_hierarchy_previous
+  GROUP BY product_name, display_name, rate_pct, profile_type, hierarchy_id
+),
+hierarchy_product_comparison AS (
+  SELECT
+    COALESCE(curr.product_name, prev.product_name) AS product_name,
+    COALESCE(curr.display_name, prev.display_name) AS display_name,
+    COALESCE(curr.rate_pct, prev.rate_pct) AS rate_pct,
+    COALESCE(curr.profile_type, prev.profile_type) AS profile_type,
+    COALESCE(curr.hierarchy_id, prev.hierarchy_id) AS hierarchy_id,
+    COALESCE(prev.txn_count, 0) AS previous_txn_count,
+    COALESCE(curr.txn_count, 0) AS current_txn_count,
+    COALESCE(prev.transaction_volume, 0) AS previous_transaction_volume,
+    COALESCE(curr.transaction_volume, 0) AS current_transaction_volume,
+    COALESCE(prev.revenue_amount, 0) AS previous_revenue_amount,
+    COALESCE(curr.revenue_amount, 0) AS current_revenue_amount,
+    COALESCE(curr.entities_with_activity, 0) AS current_entities_with_activity,
+    COALESCE(prev.entities_with_activity, 0) AS previous_entities_with_activity
+  FROM product_hierarchy_txns_current curr
+  FULL OUTER JOIN product_hierarchy_txns_previous prev
+    ON curr.product_name = prev.product_name
+    AND curr.hierarchy_id IS NOT DISTINCT FROM prev.hierarchy_id
+)`
+
+/** Product txn count, volume, and revenue rolled up by business hierarchy with previous vs current period. */
+export const PRODUCT_HIERARCHY_PERIOD_COMPARISON = `
+WITH ${SHARED_DIM_CTES},
+${PERIOD_BOUNDS_COMPARISON},
+${PRODUCT_PERIOD_CTES},
+${HIERARCHY_PRODUCT_PERIOD_CTES}
+SELECT
+  pb.period_start,
+  pb.period_end,
+  pb.previous_period_start,
+  pb.previous_period_end,
+  COALESCE(bh.name, 'Unassigned') AS hierarchy_name,
+  hpc.product_name,
+  hpc.display_name,
+  hpc.rate_pct,
+  hpc.profile_type,
+  hpc.previous_entities_with_activity,
+  hpc.current_entities_with_activity,
+  hpc.previous_txn_count,
+  hpc.current_txn_count,
+  hpc.current_txn_count - hpc.previous_txn_count AS txn_count_change,
+  hpc.previous_transaction_volume,
+  hpc.current_transaction_volume,
+  hpc.current_transaction_volume - hpc.previous_transaction_volume AS transaction_volume_change,
+  hpc.previous_revenue_amount,
+  hpc.current_revenue_amount,
+  hpc.current_revenue_amount - hpc.previous_revenue_amount AS revenue_change
+FROM hierarchy_product_comparison hpc
+CROSS JOIN period_bounds pb
+LEFT JOIN hierarchies_deduped bh ON bh.id = hpc.hierarchy_id
+WHERE 1 = 1
+  [[AND bh.name = :hierarchyName?]]
+ORDER BY
+  hpc.product_name,
+  CASE WHEN COALESCE(bh.name, 'Unassigned') = 'Unassigned' THEN 1 ELSE 0 END,
+  COALESCE(bh.name, 'Unassigned'),
+  hpc.current_revenue_amount DESC NULLS LAST
+`
+
 const INACTIVE_USER_CTES = `
 entity_product_users AS (
   SELECT
@@ -427,6 +559,7 @@ async function validateReports(dateFilters: Record<string, string>) {
   const reports = [
     ['Product Summary — period comparison', PRODUCT_SUMMARY_PERIOD_COMPARISON],
     ['Product by entity — period comparison', PRODUCT_ENTITY_PERIOD_COMPARISON],
+    ['Product by hierarchy — period comparison', PRODUCT_HIERARCHY_PERIOD_COMPARISON],
     ['Inactive entity users — period comparison', INACTIVE_ENTITY_USERS_PERIOD_COMPARISON],
   ] as const
 
@@ -475,6 +608,14 @@ async function seedReports(dataSourceId: string) {
       category: ReportCategory.OPERATIONAL,
       visualization: ReportVisualization.TABLE_ONLY,
       sql: PRODUCT_ENTITY_PERIOD_COMPARISON.trim(),
+    },
+    {
+      name: '[Product] - Summary by hierarchy — period comparison',
+      description:
+        'APS PAY, Ticket, and Disbursement txn count, volume, and revenue rolled up by business hierarchy with previous vs current period comparison. Merchant products use CR on MERCHANT entity; Disbursement uses DR on ENTERPRISE entity.',
+      category: ReportCategory.OPERATIONAL,
+      visualization: ReportVisualization.TABLE_ONLY,
+      sql: PRODUCT_HIERARCHY_PERIOD_COMPARISON.trim(),
     },
     {
       name: '[Product] - Inactive entity users — period comparison',
@@ -550,6 +691,8 @@ if (import.meta.url === new URL(process.argv[1], 'file:').href) {
     console.log(PRODUCT_SUMMARY_PERIOD_COMPARISON.trim())
     console.log('\n-- PRODUCT_ENTITY_PERIOD_COMPARISON --')
     console.log(PRODUCT_ENTITY_PERIOD_COMPARISON.trim())
+    console.log('\n-- PRODUCT_HIERARCHY_PERIOD_COMPARISON --')
+    console.log(PRODUCT_HIERARCHY_PERIOD_COMPARISON.trim())
     console.log('\n-- INACTIVE_ENTITY_USERS_PERIOD_COMPARISON --')
     console.log(INACTIVE_ENTITY_USERS_PERIOD_COMPARISON.trim())
   } else {

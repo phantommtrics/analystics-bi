@@ -4,6 +4,7 @@ import { prisma } from '../src/prisma.ts'
 import { executeDataSourceQuery } from '../src/datasources/service.ts'
 import { applySqlFilters } from '../src/reports/sqlFilters.ts'
 import { publishSavedReport } from '../src/reports/service.ts'
+import { EMONEY_POUCH_DIM_CTES, EMONEY_POUCH_TXN_JOIN } from './report-sql-constants.ts'
 
 const SHARED_DIM_CTES = `
 entities_deduped AS (
@@ -23,7 +24,8 @@ hierarchies_deduped AS (
   FROM business_hierarchies bh
   WHERE bh.deleted_at IS NULL
   ORDER BY bh.id
-)`
+),
+${EMONEY_POUCH_DIM_CTES}`
 
 const PERIOD_BOUNDS = `
 period_bounds AS (
@@ -45,6 +47,7 @@ entity_txn_volumes AS (
     MAX(t.transaction_amount::numeric) AS transaction_volume
   FROM transactions t
   JOIN entities_deduped e ON e.id = t.entity_id
+  ${EMONEY_POUCH_TXN_JOIN}
   LEFT JOIN products_deduped p ON p.id = t.product_id
   WHERE t.deleted_at IS NULL
     AND t.status = 'SUCCESS'
@@ -299,7 +302,7 @@ async function seedReports(dataSourceId: string) {
     {
       name: '[Transaction] - Summary by scope',
       description:
-        'Successful transaction count and volume for the selected date range. Default view shows Customer and Agent totals. Optional filters: entityCategory (e.g. CUSTOMER, AGENT, MERCHANT) or entityName for any specific entity. Counts distinct business transactions per entity; volume dedupes multiple ledger legs on the same transaction_id.',
+        'Successful EMoney pouch transaction count and volume for the selected date range. Default view shows Customer and Agent totals. Optional filters: entityCategory (e.g. CUSTOMER, AGENT, MERCHANT) or entityName for any specific entity. Counts distinct business transactions per entity; volume dedupes multiple ledger legs on the same transaction_id.',
       category: ReportCategory.OPERATIONAL,
       visualization: ReportVisualization.TABLE_ONLY,
       sql: TRANSACTION_SUMMARY.trim(),
@@ -307,7 +310,7 @@ async function seedReports(dataSourceId: string) {
     {
       name: '[Transaction] - Detail by product',
       description:
-        'Product-level transaction count and volume within each scope (Customer, Agent, or filtered entity) for the selected date range. Use entityCategory or entityName to narrow scope; default shows Customer and Agent product mix.',
+        'EMoney pouch product-level transaction count and volume within each scope (Customer, Agent, or filtered entity) for the selected date range. Use entityCategory or entityName to narrow scope; default shows Customer and Agent product mix.',
       category: ReportCategory.OPERATIONAL,
       visualization: ReportVisualization.TABLE_ONLY,
       sql: TRANSACTION_DETAIL_BY_PRODUCT.trim(),
@@ -315,7 +318,7 @@ async function seedReports(dataSourceId: string) {
     {
       name: '[Transaction] - Detail by entity and product',
       description:
-        'Product breakdown with hierarchy and entity name on each row. Intended for entityCategory or entityName filters (e.g. all AGENT entities or one Merchant entity). Without filters, lists every entity that had activity in the period.',
+        'EMoney pouch product breakdown with hierarchy and entity name on each row. Intended for entityCategory or entityName filters (e.g. all AGENT entities or one Merchant entity). Without filters, lists every entity that had activity in the period.',
       category: ReportCategory.OPERATIONAL,
       visualization: ReportVisualization.TABLE_ONLY,
       sql: TRANSACTION_DETAIL_BY_ENTITY_PRODUCT.trim(),

@@ -52,7 +52,7 @@ function buildInviteHtml(payload: InviteEmailPayload): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>APS Wallet BI Invitation</title>
+  <title>PrixBI Invitation</title>
 </head>
 <body style="margin:0;padding:0;background-color:#eef2f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${BRAND.text};">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#eef2f7;padding:32px 16px;">
@@ -64,12 +64,12 @@ function buildInviteHtml(payload: InviteEmailPayload): string {
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                 <tr>
                   <td>
-                    <div style="display:inline-block;width:40px;height:40px;line-height:40px;text-align:center;border-radius:8px;background-color:${BRAND.gold};color:${BRAND.navy};font-size:18px;font-weight:700;">A</div>
+                    <div style="display:inline-block;min-width:40px;height:40px;line-height:40px;padding:0 8px;text-align:center;border-radius:8px;background-color:${BRAND.gold};color:${BRAND.navy};font-size:15px;font-weight:700;">Px</div>
                   </td>
                 </tr>
                 <tr>
                   <td style="padding-top:16px;">
-                    <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.72);">APS Wallet BI</p>
+                    <p style="margin:0;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.72);">PrixBI</p>
                     <h1 style="margin:8px 0 0;font-size:24px;line-height:1.3;font-weight:600;color:#ffffff;">You're invited</h1>
                   </td>
                 </tr>
@@ -116,7 +116,7 @@ function buildInviteHtml(payload: InviteEmailPayload): string {
               <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 24px;">
                 <tr>
                   <td style="border-radius:8px;background-color:${BRAND.blue};">
-                    <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Sign in to APS Wallet BI</a>
+                    <a href="${loginUrl}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">Sign in to PrixBI</a>
                   </td>
                 </tr>
               </table>
@@ -129,7 +129,7 @@ function buildInviteHtml(payload: InviteEmailPayload): string {
             <td style="padding:20px 32px;background-color:${BRAND.surface};border-top:1px solid ${BRAND.border};">
               <p style="margin:0;font-size:12px;line-height:1.5;color:${BRAND.muted};text-align:center;">
                 If you did not expect this invitation, contact your system administrator.<br />
-                &copy; APS Wallet BI
+                &copy; PrixBI
               </p>
             </td>
           </tr>
@@ -200,7 +200,7 @@ export async function sendInviteEmail(payload: InviteEmailPayload): Promise<Invi
     const { error } = await resend.emails.send({
       from: env.RESEND_FROM!,
       to: payload.to,
-      subject: 'Your APS Wallet BI account invitation',
+      subject: 'Your PrixBI account invitation',
       html: buildInviteHtml(payload),
     })
 

@@ -106,9 +106,12 @@ export function DashboardWidget({
 
   const meta = categoryMeta[report.category]
   const showChart =
-    !loading && visualization !== 'TABLE_ONLY' && chartData.series.length > 0
+    !loading &&
+    visualization !== 'TABLE_ONLY' &&
+    (chartData.series.length > 0 || pieData.length > 0)
   const showChartSkeleton = loading && visualization !== 'TABLE_ONLY'
   const showTable =
+    visualization === 'TABLE_ONLY' &&
     queryFilters !== undefined &&
     (loading || (result !== null && result.rows.length > 0))
 
@@ -215,7 +218,7 @@ export function DashboardWidget({
               </div>
             )}
             {showChart && result && (
-              <div className="mb-2">
+              <div className="h-full min-h-[120px]">
                 <ReportChartPreview
                   ref={chartRef}
                   visualization={visualization}
@@ -228,6 +231,15 @@ export function DashboardWidget({
             {exportError && (
               <p className="mb-2 text-center text-xs text-semantic-red">{exportError}</p>
             )}
+            {result &&
+              visualization !== 'TABLE_ONLY' &&
+              !showChart &&
+              !loading &&
+              result.rows.length > 0 && (
+                <p className="py-6 text-center text-xs text-text-secondary">
+                  No numeric columns for charting.
+                </p>
+              )}
             {showTable && (
               <QueryResultsTable
                 queryResult={result}

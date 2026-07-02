@@ -4,6 +4,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Card, CardHeader, CardTitle } from '../../components/ui/Card'
 import { LoadingButton } from '../../components/ui/LoadingButton'
 import { adminApi, type OrganizationSummary } from '../../api/admin'
+import { launchPayInDirectPay } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { Navigate } from 'react-router-dom'
 
@@ -193,6 +194,23 @@ export function Organizations() {
       await loadData()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function payInDirectPay(org: OrganizationSummary) {
+    if (!accessToken) return
+    setActionLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      await launchPayInDirectPay(accessToken)
+      setSuccess(`Opened DirectPay payment for ${org.name}`)
+      await refreshUser()
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to open DirectPay payment')
     } finally {
       setActionLoading(false)
     }
@@ -463,15 +481,14 @@ export function Organizations() {
                             Start Corporate Plan
                           </LoadingButton>
                         )}
-                        {org.subscription.payUrl && (
-                          <a
-                            href={org.subscription.payUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center justify-center rounded-md bg-brand-blue px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                        {org.directPayBusinessId && org.subscription.status && (
+                          <LoadingButton
+                            type="button"
+                            loading={actionLoading}
+                            onClick={() => payInDirectPay(org)}
                           >
                             Pay in DirectPay
-                          </a>
+                          </LoadingButton>
                         )}
                         {org.directPayBusinessId && (
                           <LoadingButton

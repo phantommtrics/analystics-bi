@@ -13,6 +13,7 @@ import {
   cachedOrganizationSubscription,
   syncOrganizationSubscription,
 } from '../../directpay/subscription-sync.js'
+import { openOrganizationSubscriptionPay } from '../../directpay/open-pay.js'
 import { invalidateOrganizationCache } from '../../organization/scope.js'
 import { paramId } from '../../utils/params.js'
 import { env } from '../../env.js'
@@ -306,4 +307,29 @@ organizationsRouter.post('/:id/directpay/sync', async (req, res) => {
 
   const subscription = await syncOrganizationSubscription(org.id)
   res.json({ subscription })
+})
+
+organizationsRouter.post('/:id/directpay/pay-in-directpay', async (req, res) => {
+  const id = paramId(req)
+  const org = await prisma.organization.findUnique({ where: { id } })
+  if (!org) {
+    return res.status(404).json({ message: 'Organization not found' })
+  }
+
+  try {
+    const result = await openOrganizationSubscriptionPay(org.id)
+    res.json({
+      payUrl: result.payUrl,
+      pendingInvoice: result.pendingInvoice,
+      subscription: result.subscription,
+      invoiceCreated: result.invoiceCreated,
+    })
+  } catch (err) {
+    const status = (err as Error & { status?: number }).status ?? 500
+    const message = err instanceof Error ? err.message : 'Failed to open DirectPay payment'
+    if (status >= 500) {
+      console.error('[admin/directpay/pay-in-directpay]', err)
+    }
+    return res.status(status).json({ message })
+  }
 })

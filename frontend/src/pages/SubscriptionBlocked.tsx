@@ -1,4 +1,7 @@
+import { useState } from 'react'
+import { launchPayInDirectPay } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
+import { LoadingButton } from '../components/ui/LoadingButton'
 
 function formatDate(iso: string | null | undefined) {
   if (!iso) return '—'
@@ -14,8 +17,26 @@ function formatDate(iso: string | null | undefined) {
 }
 
 export function SubscriptionBlocked() {
-  const { user, logout } = useAuth()
+  const { user, accessToken, logout, refreshUser } = useAuth()
   const sub = user?.subscription
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function renewInDirectPay() {
+    if (!accessToken) return
+    setLoading(true)
+    setError('')
+    try {
+      await launchPayInDirectPay(accessToken)
+      await refreshUser()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to open DirectPay payment')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const canPay = Boolean(user?.organization)
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-primary px-4">
@@ -35,15 +56,20 @@ export function SubscriptionBlocked() {
             Period ended: {formatDate(sub.periodEnd)}
           </p>
         )}
-        {sub?.payUrl ? (
-          <a
-            href={sub.payUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mb-4 inline-flex w-full items-center justify-center rounded-md bg-brand-blue px-4 py-2.5 text-sm font-medium text-white hover:opacity-90"
+        {error && (
+          <p className="mb-4 text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        )}
+        {canPay ? (
+          <LoadingButton
+            type="button"
+            loading={loading}
+            className="mb-4 w-full"
+            onClick={renewInDirectPay}
           >
             Renew in DirectPay
-          </a>
+          </LoadingButton>
         ) : (
           <p className="mb-4 text-sm text-text-secondary">
             Contact your administrator to renew the subscription in DirectPay.

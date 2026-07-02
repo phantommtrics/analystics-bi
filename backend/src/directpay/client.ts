@@ -35,6 +35,11 @@ export type DirectPaySubscriptionData = {
   } | null
 }
 
+export type DirectPaySubscriptionPayableInvoiceData = DirectPaySubscriptionData & {
+  payUrl: string
+  invoiceCreated: boolean
+}
+
 export type DirectPayProvisionResult = {
   businessId: string
   userId: string
@@ -68,7 +73,7 @@ export function buildGuestInvoicePayUrl(guestToken: string | null | undefined): 
   if (!guestToken?.trim()) return null
   const { publicAppUrl } = getDirectPayPartnerConfig()
   if (!publicAppUrl) return null
-  return `${publicAppUrl}/guest/subscription-invoice/${encodeURIComponent(guestToken.trim())}`
+  return `${publicAppUrl}/#/guest/subscription-invoice/${encodeURIComponent(guestToken.trim())}`
 }
 
 async function partnerJson<T>(
@@ -148,6 +153,14 @@ export async function startDirectPaySubscription(
         billingInterval: input?.billingInterval,
       },
     },
+  )
+  return json.data
+}
+
+export async function issueDirectPaySubscriptionInvoice(businessId: string) {
+  const json = await partnerJson<{ data: DirectPaySubscriptionPayableInvoiceData }>(
+    `/businesses/${encodeURIComponent(businessId)}/subscription/invoices`,
+    { method: 'POST', body: {} },
   )
   return json.data
 }

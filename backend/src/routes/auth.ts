@@ -16,6 +16,7 @@ import {
   syncOrganizationSubscription,
 } from '../directpay/subscription-sync.js'
 import { isSubscriptionAccessAllowed } from '../directpay/client.js'
+import { openOrganizationSubscriptionPay } from '../directpay/open-pay.js'
 
 const loginSchema = z.object({
   identifier: z.string().min(1),
@@ -187,6 +188,39 @@ authRouter.get('/me', authenticate, async (req, res) => {
       accessAllowed,
     },
   })
+})
+
+authRouter.post('/subscription/pay-in-directpay', authenticate, async (req, res) => {
+  const authUser = req.authUser
+  if (!authUser) {
+    return res.status(401).json({ message: 'Unauthorized' })
+  }
+  if (!authUser.organizationId) {
+    return res.status(400).json({ message: 'No organization assigned' })
+  }
+
+  try {
+    const result = await openOrganizationSubscriptionPay(authUser.organizationId)
+    return res.json({
+      payUrl: result.payUrl,
+      pendingInvoice: result.pendingInvoice,
+      subscription: {
+        status: result.subscription.status,
+        planCode: result.subscription.planCode,
+        periodEnd: result.subscription.periodEnd,
+        payUrl: result.subscription.payUrl,
+        accessAllowed: result.subscription.accessAllowed,
+      },
+      invoiceCreated: result.invoiceCreated,
+    })
+  } catch (err) {
+    const status = (err as Error & { status?: number }).status ?? 500
+    const message = err instanceof Error ? err.message : 'Failed to open DirectPay payment'
+    if (status >= 500) {
+      console.error('[auth/subscription/pay-in-directpay]', err)
+    }
+    return res.status(status).json({ message })
+  }
 })
 
 authRouter.post('/change-password', authenticate, async (req, res) => {

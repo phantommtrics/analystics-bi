@@ -131,6 +131,12 @@ authRouter.get('/me', authenticate, async (req, res) => {
           subscriptionPlanCode: true,
           subscriptionPeriodEnd: true,
           subscriptionPayUrl: true,
+          subscriptionBillingAssigned: true,
+          subscriptionBillingTemplateId: true,
+          subscriptionBillingTemplateName: true,
+          subscriptionBillingAmount: true,
+          subscriptionBillingCurrency: true,
+          subscriptionBillingInterval: true,
         },
       },
     },
@@ -148,6 +154,7 @@ authRouter.get('/me', authenticate, async (req, res) => {
         payUrl: null,
         accessAllowed: authUser.userType === UserType.OWNER,
         directPayBusinessId: null,
+        billing: { assigned: false as const, message: 'No billing is assigned' as const },
       }
 
   if (
@@ -186,6 +193,7 @@ authRouter.get('/me', authenticate, async (req, res) => {
       periodEnd: subscription.periodEnd,
       payUrl: subscription.payUrl,
       accessAllowed,
+      billing: subscription.billing,
     },
   })
 })
@@ -210,8 +218,10 @@ authRouter.post('/subscription/pay-in-directpay', authenticate, async (req, res)
         periodEnd: result.subscription.periodEnd,
         payUrl: result.subscription.payUrl,
         accessAllowed: result.subscription.accessAllowed,
+        billing: result.subscription.billing,
       },
       invoiceCreated: result.invoiceCreated,
+      billing: result.subscription.billing,
     })
   } catch (err) {
     const status = (err as Error & { status?: number }).status ?? 500

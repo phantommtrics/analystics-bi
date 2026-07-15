@@ -33,6 +33,12 @@ export async function requireActiveSubscription(
       subscriptionPlanCode: true,
       subscriptionPeriodEnd: true,
       subscriptionPayUrl: true,
+      subscriptionBillingAssigned: true,
+      subscriptionBillingTemplateId: true,
+      subscriptionBillingTemplateName: true,
+      subscriptionBillingAmount: true,
+      subscriptionBillingCurrency: true,
+      subscriptionBillingInterval: true,
     },
   })
 

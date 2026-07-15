@@ -69,6 +69,12 @@ function formatOrg(org: {
   subscriptionPeriodEnd: Date | null
   subscriptionSyncedAt: Date | null
   subscriptionPayUrl: string | null
+  subscriptionBillingAssigned: boolean
+  subscriptionBillingTemplateId: string | null
+  subscriptionBillingTemplateName: string | null
+  subscriptionBillingAmount: string | null
+  subscriptionBillingCurrency: string | null
+  subscriptionBillingInterval: string | null
   _count: { users: number }
 }) {
   const subscription = cachedOrganizationSubscription(org)
@@ -90,6 +96,7 @@ function formatOrg(org: {
       periodEnd: subscription.periodEnd,
       payUrl: org.subscriptionPayUrl,
       accessAllowed: subscription.accessAllowed,
+      billing: subscription.billing,
       syncedAt: org.subscriptionSyncedAt?.toISOString() ?? null,
     },
   }
@@ -241,7 +248,8 @@ organizationsRouter.post('/:id/directpay/provision', async (req, res) => {
     ownerName: org.billingOwnerName,
     businessName: org.name,
     slug: org.slug,
-    industry: org.industry ?? undefined,
+    // Corporate billing templates in DirectPay require industry "Corporate".
+    industry: org.industry?.trim() || 'Corporate',
     webhookUrl,
   })
 
@@ -292,6 +300,7 @@ organizationsRouter.post('/:id/directpay/subscription', async (req, res) => {
   res.status(201).json({
     subscription: synced,
     pendingInvoice: remote.pendingInvoice,
+    billing: remote.billing,
   })
 })
 
@@ -323,6 +332,7 @@ organizationsRouter.post('/:id/directpay/pay-in-directpay', async (req, res) => 
       pendingInvoice: result.pendingInvoice,
       subscription: result.subscription,
       invoiceCreated: result.invoiceCreated,
+      billing: result.subscription.billing,
     })
   } catch (err) {
     const status = (err as Error & { status?: number }).status ?? 500

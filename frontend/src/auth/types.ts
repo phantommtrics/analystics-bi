@@ -6,7 +6,30 @@ export interface SubscriptionInfo {
   periodEnd: string | null
   payUrl: string | null
   accessAllowed: boolean
+  billing?: OrganizationBillingInfo
 }
+
+export type OrganizationBillingInfo =
+  | {
+      assigned: false
+      message: 'No billing is assigned'
+    }
+  | {
+      assigned: true
+      templateId: string
+      templateName: string
+      billingInterval: string
+      currency: string
+      amount: string
+      prices?: {
+        monthly: string
+        quarterly: string
+        halfYearly: string
+        yearly: string
+        twoYears: string
+        contract: string
+      }
+    }
 
 export interface AuthUser {
   id: string

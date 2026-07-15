@@ -104,6 +104,12 @@ model Organization {
   subscriptionPlanCode    String?
   subscriptionSyncedAt    DateTime?
   subscriptionPayUrl      String?
+  /// Mirrored from DirectPay partner `billing` — false until a corporate template is assigned.
+  subscriptionBillingAssigned Boolean @default(false)
+  subscriptionBillingTemplateId String?
+  subscriptionBillingTemplateName String?
+  subscriptionBillingAmount String?
+  subscriptionBillingCurrency String?
   subscriptionReminderLastSentAt DateTime?
   users                   User[]
   dataSources             DataSource[]

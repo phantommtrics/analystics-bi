@@ -1,5 +1,27 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
 
+export type OrganizationBillingInfo =
+  | {
+      assigned: false
+      message: 'No billing is assigned'
+    }
+  | {
+      assigned: true
+      templateId: string
+      templateName: string
+      billingInterval: string
+      currency: string
+      amount: string
+      prices?: {
+        monthly: string
+        quarterly: string
+        halfYearly: string
+        yearly: string
+        twoYears: string
+        contract: string
+      }
+    }
+
 export type PayInDirectPayResult = {
   payUrl: string
   pendingInvoice: {
@@ -16,8 +38,10 @@ export type PayInDirectPayResult = {
     periodEnd: string | null
     payUrl: string | null
     accessAllowed: boolean
+    billing: OrganizationBillingInfo
   }
   invoiceCreated: boolean
+  billing: OrganizationBillingInfo
 }
 
 export async function openPayInDirectPay(accessToken: string): Promise<PayInDirectPayResult> {

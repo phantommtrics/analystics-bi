@@ -259,6 +259,40 @@ export const adminApi = {
       token,
       { method: 'POST' },
     ),
+
+  payInDirectPay: (token: string, orgId: string) =>
+    adminFetch<{
+      payUrl: string
+      pendingInvoice: {
+        id: string
+        amount: string
+        currency: string
+        status: string
+        dueDate: string
+        guestToken: string | null
+      }
+      subscription: OrganizationSubscription
+      invoiceCreated: boolean
+      billing: OrganizationBillingInfo
+    }>(`/organizations/${orgId}/directpay/pay-in-directpay`, token, { method: 'POST' }),
+}
+
+export interface OrganizationBillingInfo {
+  assigned: boolean
+  message?: 'No billing is assigned'
+  templateId?: string
+  templateName?: string
+  billingInterval?: string
+  currency?: string
+  amount?: string
+  prices?: {
+    monthly: string
+    quarterly: string
+    halfYearly: string
+    yearly: string
+    twoYears: string
+    contract: string
+  }
 }
 
 export interface OrganizationSubscription {
@@ -267,6 +301,7 @@ export interface OrganizationSubscription {
   periodEnd: string | null
   payUrl: string | null
   accessAllowed: boolean
+  billing: OrganizationBillingInfo
 }
 
 export interface OrganizationSummary {

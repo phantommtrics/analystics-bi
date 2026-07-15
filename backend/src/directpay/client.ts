@@ -8,9 +8,32 @@ export type DirectPayPartnerConfig = {
   configured: boolean
 }
 
+export type DirectPayBillingAssignment =
+  | {
+      assigned: false
+      message: 'No billing is assigned'
+    }
+  | {
+      assigned: true
+      templateId: string
+      templateName: string
+      billingInterval: string
+      currency: string
+      amount: string
+      prices: {
+        monthly: string
+        quarterly: string
+        halfYearly: string
+        yearly: string
+        twoYears: string
+        contract: string
+      }
+    }
+
 export type DirectPaySubscriptionData = {
   businessId: string
   partnerProvisioningExternalUserId: string | null
+  billing: DirectPayBillingAssignment
   subscription: {
     id: string
     status: string
@@ -106,9 +129,18 @@ async function partnerJson<T>(
     json = { raw: text }
   }
   if (!res.ok) {
-    const err = new Error(`DirectPay ${method} ${path} failed: ${res.status} ${text.slice(0, 500)}`)
-    ;(err as Error & { status?: number; body?: unknown }).status = res.status
-    ;(err as Error & { status?: number; body?: unknown }).body = json
+    const apiMessage =
+      typeof json.error === 'string'
+        ? json.error
+        : typeof json.message === 'string'
+          ? json.message
+          : text.slice(0, 500)
+    const err = new Error(apiMessage)
+    ;(err as Error & { status?: number; body?: unknown; remoteDetail?: string }).status =
+      res.status
+    ;(err as Error & { status?: number; body?: unknown; remoteDetail?: string }).body = json
+    ;(err as Error & { status?: number; body?: unknown; remoteDetail?: string }).remoteDetail =
+      `DirectPay ${method} ${path} failed: ${res.status}`
     throw err
   }
   return json as T

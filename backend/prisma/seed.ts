@@ -161,7 +161,12 @@ async function main() {
     try {
       const conn = parseDatabaseUrl(databaseUrl)
       await prisma.dataSource.upsert({
-        where: { name: 'APS Wallet (Local)' },
+        where: {
+          organizationId_name: {
+            organizationId: organization.id,
+            name: 'APS Wallet (Local)',
+          },
+        },
         update: {
           host: conn.host,
           port: conn.port,
@@ -173,6 +178,7 @@ async function main() {
         },
         create: {
           name: 'APS Wallet (Local)',
+          organizationId: organization.id,
           host: conn.host,
           port: conn.port,
           database: conn.database,

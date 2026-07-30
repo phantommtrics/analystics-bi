@@ -11,7 +11,7 @@ import {
   updateDataSource,
 } from '../../datasources/service.js'
 import { paramId } from '../../utils/params.js'
-import { organizationWhere, resolveOrganizationId } from '../../organization/scope.js'
+import { organizationListWhere, resolveOrganizationId } from '../../organization/scope.js'
 
 export const datasourcesRouter = Router()
 
@@ -28,6 +28,7 @@ const createDataSourceSchema = z.object({
   password: z.string().min(1).max(500),
   sslMode: sslModeSchema.default(SslMode.REQUIRE),
   isActive: z.boolean().optional(),
+  organizationId: z.string().min(1).optional(),
 })
 
 const updateDataSourceSchema = z.object({
@@ -49,7 +50,7 @@ datasourcesRouter.get(
   ]),
   async (req, res) => {
     const activeOnly = req.query.active === 'true'
-    const orgFilter = await organizationWhere(req)
+    const orgFilter = await organizationListWhere(req)
     const dataSources = await listDataSources(
       activeOnly,
       orgFilter.organizationId,
@@ -64,14 +65,15 @@ datasourcesRouter.post('/', authorize('system-config-datasources', 'edit'), asyn
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const organizationId = await resolveOrganizationId(req)
+  const organizationId = await resolveOrganizationId(req, parsed.data.organizationId)
   if (!organizationId) {
     return res.status(400).json({ message: 'Organization context required' })
   }
 
   try {
+    const { organizationId: _ignored, ...fields } = parsed.data
     const dataSource = await createDataSource({
-      ...parsed.data,
+      ...fields,
       createdById: req.authUser?.id,
       organizationId,
     })

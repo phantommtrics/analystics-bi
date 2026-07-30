@@ -98,7 +98,7 @@ Renewal runs automatically; no extra setup needed.
 |------|------------------|
 | DNS | `sandbox-prixbi.phantommetrics.gm` A record → server IP |
 | Backend | Running on port 4000 (e.g. PM2, systemd) |
-| Frontend | Static files in `/var/www/prixbi` |
+| Frontend | Static files in `/var/www/web-prixbi` |
 | Nginx | Config in `sites-enabled`, `nginx -t` OK |
 | Certbot | `certbot --nginx -d sandbox-prixbi.phantommetrics.gm` |
 | Renewal | `certbot renew --dry-run` succeeds |

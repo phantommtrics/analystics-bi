@@ -33,6 +33,8 @@ export interface DataSourceSummary {
   username: string
   sslMode: 'DISABLE' | 'REQUIRE'
   isActive: boolean
+  organizationId: string
+  organizationName: string
   createdAt: string
   updatedAt: string
 }
@@ -44,11 +46,13 @@ export interface TestConnectionResult {
 }
 
 export const datasourcesApi = {
-  list: (token: string, activeOnly = false) =>
-    datasourcesFetch<DataSourceSummary[]>(
-      activeOnly ? '?active=true' : '',
-      token,
-    ),
+  list: (token: string, activeOnly = false, organizationId?: string) => {
+    const params = new URLSearchParams()
+    if (activeOnly) params.set('active', 'true')
+    if (organizationId) params.set('organizationId', organizationId)
+    const query = params.toString()
+    return datasourcesFetch<DataSourceSummary[]>(query ? `?${query}` : '', token)
+  },
 
   create: (
     token: string,
@@ -61,6 +65,7 @@ export const datasourcesApi = {
       password: string
       sslMode: 'DISABLE' | 'REQUIRE'
       isActive?: boolean
+      organizationId?: string
     },
   ) =>
     datasourcesFetch<DataSourceSummary>('', token, {

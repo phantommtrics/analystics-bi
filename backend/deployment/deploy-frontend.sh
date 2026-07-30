@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Build frontend and rsync dist/ to the server web root.
 # Usage: bash backend/deployment/deploy-frontend.sh [user@host]
-# Default remote path: /var/www/prixbi
+# Default remote path: /var/www/web-prixbi
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REMOTE="${1:-}"
-REMOTE_PATH="/var/www/prixbi"
+REMOTE_PATH="/var/www/web-prixbi"
 
 echo "==> Building frontend"
 cd "$ROOT/frontend"

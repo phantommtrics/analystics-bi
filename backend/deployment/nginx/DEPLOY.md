@@ -20,9 +20,9 @@ On the live server:
 ```bash
 sudo apt update
 sudo apt install -y nginx certbot python3-certbot-nginx postgresql nodejs npm
-sudo mkdir -p /var/www/prixbi /var/www/certbot
+sudo mkdir -p /var/www/web-prixbi /var/www/certbot
 sudo chown -R www-data:www-data /var/www/certbot
-sudo chown -R "$USER":www-data /var/www/prixbi
+sudo chown -R "$USER":www-data /var/www/web-prixbi
 ```
 
 Ensure DNS: `sandbox-prixbi.phantommetrics.gm` A record → server IP.
@@ -73,17 +73,17 @@ Or manually:
 
 ```bash
 cd frontend
-npm ci
-npm run build    # uses frontend/.env.production → VITE_API_BASE_URL=/api
-rsync -av --delete dist/ user@server:/var/www/prixbi/
+npm ci && npm run build    # uses frontend/.env.production 
+VITE_API_BASE_URL=/api
+rsync -av --delete dist/ user@server:/var/www/web-prixbi/
 ```
 
 On the server, fix permissions:
 
 ```bash
-sudo chown -R www-data:www-data /var/www/prixbi
-sudo find /var/www/prixbi -type d -exec chmod 755 {} \;
-sudo find /var/www/prixbi -type f -exec chmod 644 {} \;
+sudo chown -R www-data:www-data /var/www/web-prixbi
+sudo find /var/www/web-prixbi -type d -exec chmod 755 {} \;
+sudo find /var/www/web-prixbi -type f -exec chmod 644 {} \;
 ```
 
 ---
@@ -128,7 +128,7 @@ sudo ln -sf /etc/nginx/sites-available/sandbox-prixbi.conf /etc/nginx/sites-enab
 **If Certbot already added HTTPS**, open the live config and ensure the **443** `server` block uses the same `location` blocks — especially:
 
 - `/api/` → `proxy_pass http://127.0.0.1:4000`
-- `/` → `try_files $uri $uri/ /index.html` with `root /var/www/prixbi`
+- `/` → `try_files $uri $uri/ /index.html` with `root /var/www/web-prixbi`
 
 Remove any old catch-all like `location / { proxy_pass http://127.0.0.1:4000; }`.
 
@@ -193,7 +193,7 @@ No nginx reload needed for static-only frontend updates.
 |-------|-----|
 | `/login` returns JSON 404 | `location /` still proxies to Node — use SPA `try_files` |
 | API calls fail (404/HTML) | Missing or wrong `location /api/` block |
-| Blank page, 200 on `/` | Empty `/var/www/prixbi` — run build + rsync |
+| Blank page, 200 on `/` | Empty `/var/www/web-prixbi` — run build + rsync |
 | Mixed content errors | Use HTTPS for both frontend and `APP_PUBLIC_URL` |
 | 502 on `/api/` | Node not on 4000 — `pm2 restart prixbi-backend` |
 | CORS errors | Add production URL to `CORS_ORIGIN` in backend `.env` |

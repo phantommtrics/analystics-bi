@@ -9,6 +9,7 @@ import {
   datasourcesApi,
   type DataSourceSummary,
 } from '../../api/datasources'
+import { adminApi, type OrganizationSummary } from '../../api/admin'
 import { useAuth } from '../../auth/AuthContext'
 
 type PendingAction =
@@ -53,8 +54,11 @@ function FieldInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 }
 
 export function DataSources() {
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const [dataSources, setDataSources] = useState<DataSourceSummary[]>([])
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
+  const [listOrganizationId, setListOrganizationId] = useState('')
+  const [formOrganizationId, setFormOrganizationId] = useState('')
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [testingId, setTestingId] = useState<string | null>(null)
@@ -68,11 +72,25 @@ export function DataSources() {
   const [pending, setPending] = useState<PendingAction>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
 
+  const isOwner = user?.userType === 'OWNER'
+  const defaultOrgId =
+    organizations.find((o) => o.isDefault)?.id ?? organizations[0]?.id ?? ''
+
   const loadData = useCallback(async () => {
     if (!accessToken) return
-    const list = await datasourcesApi.list(accessToken)
+    const orgList = isOwner ? await adminApi.listOrganizations(accessToken) : []
+    const list = await datasourcesApi.list(
+      accessToken,
+      false,
+      listOrganizationId || undefined,
+    )
+    setOrganizations(orgList)
     setDataSources(list)
-  }, [accessToken])
+    if (!formOrganizationId) {
+      const orgId = orgList.find((o) => o.isDefault)?.id ?? orgList[0]?.id ?? ''
+      if (orgId) setFormOrganizationId(orgId)
+    }
+  }, [accessToken, formOrganizationId, isOwner, listOrganizationId])
 
   useEffect(() => {
     if (!accessToken) return
@@ -85,6 +103,7 @@ export function DataSources() {
   function openCreateForm() {
     setEditingId(null)
     setForm(emptyForm())
+    setFormOrganizationId(listOrganizationId || defaultOrgId)
     setShowForm(true)
     setError('')
     setSuccess('')
@@ -137,6 +156,7 @@ export function DataSources() {
         await datasourcesApi.create(accessToken, {
           ...payload,
           password: form.password,
+          organizationId: formOrganizationId || defaultOrgId || undefined,
         })
         setSuccess(`Data source "${payload.name}" created`)
       }
@@ -220,6 +240,25 @@ export function DataSources() {
           </div>
         )}
 
+        {isOwner && organizations.length > 1 && (
+          <div className="mb-4 max-w-md">
+            <FieldLabel>Filter by organization</FieldLabel>
+            <select
+              value={listOrganizationId}
+              onChange={(e) => setListOrganizationId(e.target.value)}
+              className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+            >
+              <option value="">All organizations</option>
+              {organizations.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.name}
+                  {org.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {showForm && (
           <Card className="mb-6">
             <CardHeader>
@@ -230,6 +269,23 @@ export function DataSources() {
               are encrypted before storage.
             </p>
             <div className="grid gap-4 md:grid-cols-2">
+              {isOwner && organizations.length > 0 && !editingId && (
+                <div className="md:col-span-2">
+                  <FieldLabel>Organization</FieldLabel>
+                  <select
+                    value={formOrganizationId || defaultOrgId}
+                    onChange={(e) => setFormOrganizationId(e.target.value)}
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2.5 text-sm outline-none focus:border-brand-blue"
+                  >
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                        {org.isDefault ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <FieldLabel>Name</FieldLabel>
                 <FieldInput
@@ -344,6 +400,16 @@ export function DataSources() {
               data={dataSources}
               keyExtractor={(ds) => ds.id}
               columns={[
+                ...(isOwner && organizations.length > 1
+                  ? [
+                      {
+                        header: 'Organization',
+                        accessor: (ds: DataSourceSummary) => (
+                          <span className="text-sm text-text-secondary">{ds.organizationName}</span>
+                        ),
+                      },
+                    ]
+                  : []),
                 {
                   header: 'Name',
                   accessor: (ds) => (

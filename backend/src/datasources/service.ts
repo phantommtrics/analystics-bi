@@ -25,8 +25,14 @@ export type DataSourcePublic = {
   username: string
   sslMode: SslMode
   isActive: boolean
+  organizationId: string
+  organizationName: string
   createdAt: Date
   updatedAt: Date
+}
+
+type DataSourceWithOrganization = DataSource & {
+  organization: { id: string; name: string }
 }
 
 export type CreateDataSourceInput = {
@@ -64,7 +70,7 @@ function toConnectionConfig(record: DataSource, password: string): PostgresConne
   }
 }
 
-export function formatDataSource(record: DataSource): DataSourcePublic {
+export function formatDataSource(record: DataSourceWithOrganization): DataSourcePublic {
   return {
     id: record.id,
     name: record.name,
@@ -75,6 +81,8 @@ export function formatDataSource(record: DataSource): DataSourcePublic {
     username: record.username,
     sslMode: record.sslMode,
     isActive: record.isActive,
+    organizationId: record.organization.id,
+    organizationName: record.organization.name,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }
@@ -94,6 +102,7 @@ export async function listDataSources(
       ...(activeOnly ? { isActive: true } : {}),
       ...(organizationId ? { organizationId } : {}),
     },
+    include: { organization: { select: { id: true, name: true } } },
     orderBy: { name: 'asc' },
   })
   return records.map(formatDataSource)
@@ -117,6 +126,7 @@ export async function createDataSource(input: CreateDataSourceInput): Promise<Da
       createdById: input.createdById,
       organizationId: input.organizationId,
     },
+    include: { organization: { select: { id: true, name: true } } },
   })
   return formatDataSource(record)
 }
@@ -146,6 +156,7 @@ export async function updateDataSource(
         ? { passwordEncrypted: encrypt(input.password) }
         : {}),
     },
+    include: { organization: { select: { id: true, name: true } } },
   })
   return formatDataSource(record)
 }

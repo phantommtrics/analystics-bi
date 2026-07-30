@@ -240,9 +240,9 @@ export function DataSources() {
           </div>
         )}
 
-        {isOwner && organizations.length > 1 && (
+        {isOwner && organizations.length > 0 && (
           <div className="mb-4 max-w-md">
-            <FieldLabel>Filter by organization</FieldLabel>
+            <FieldLabel>Organization</FieldLabel>
             <select
               value={listOrganizationId}
               onChange={(e) => setListOrganizationId(e.target.value)}
@@ -256,7 +256,17 @@ export function DataSources() {
                 </option>
               ))}
             </select>
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Choose &quot;All organizations&quot; if a data source was created but does not appear
+              under a single org.
+            </p>
           </div>
+        )}
+
+        {!isOwner && user?.organization && (
+          <p className="mb-4 text-sm text-text-secondary">
+            Showing data sources for {user.organization.name} only.
+          </p>
         )}
 
         {showForm && (
@@ -400,7 +410,7 @@ export function DataSources() {
               data={dataSources}
               keyExtractor={(ds) => ds.id}
               columns={[
-                ...(isOwner && organizations.length > 1
+                ...(isOwner
                   ? [
                       {
                         header: 'Organization',

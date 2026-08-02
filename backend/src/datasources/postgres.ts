@@ -39,6 +39,8 @@ function buildPoolConfig(config: PostgresConnectionConfig): PoolConfig {
 
 async function configureReadOnlyClient(client: PoolClient) {
   await client.query('SET default_transaction_read_only = on')
+  // Many client DB roles omit public from search_path; qualify tables in SQL regardless.
+  await client.query('SET search_path TO public, pg_catalog')
 }
 
 export function createPool(config: PostgresConnectionConfig): Pool {
@@ -170,6 +172,13 @@ function assertSafeIdentifier(name: string, label: string) {
   }
 }
 
+/** Always schema-qualified so queries work when search_path excludes public. */
+export function formatQualifiedTableName(schema: string, table: string): string {
+  assertSafeIdentifier(schema, 'schema name')
+  assertSafeIdentifier(table, 'table name')
+  return `${schema}.${table}`
+}
+
 export type SchemaTable = {
   schema: string
   name: string
@@ -204,6 +213,7 @@ export async function listSchemaTables(
        FROM information_schema.tables
        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
          AND table_type = 'BASE TABLE'
+         AND has_table_privilege(format('%I.%I', table_schema, table_name), 'SELECT')
          AND (
            $1 = '' OR
            table_name ILIKE '%' || $1 || '%' OR
@@ -217,10 +227,7 @@ export async function listSchemaTables(
     return result.rows.map((row) => ({
       schema: row.table_schema,
       name: row.table_name,
-      qualifiedName:
-        row.table_schema === 'public'
-          ? row.table_name
-          : `${row.table_schema}.${row.table_name}`,
+      qualifiedName: formatQualifiedTableName(row.table_schema, row.table_name),
     }))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to list tables'

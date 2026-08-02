@@ -20,6 +20,12 @@ function parseTableOptionId(id: string): { schema: string; table: string } | nul
   return { schema: id.slice(0, idx), table: id.slice(idx + 1) }
 }
 
+/** Match PostgreSQL quoting rules for mixed-case identifiers. */
+function quoteSqlIdentifier(name: string): string {
+  if (/^[a-z_][a-z0-9_]*$/.test(name)) return name
+  return `"${name.replace(/"/g, '""')}"`
+}
+
 export function DatabaseTableExplorer({
   accessToken,
   dataSourceId,
@@ -207,7 +213,7 @@ export function DatabaseTableExplorer({
                 <tr
                   key={col.name}
                   className="group cursor-pointer hover:bg-bg-secondary"
-                  onClick={() => onInsertFragment(col.name)}
+                  onClick={() => onInsertFragment(quoteSqlIdentifier(col.name))}
                   title="Click to insert column name"
                 >
                   <td className="py-1.5 pr-2 font-mono text-text-primary">

@@ -172,11 +172,19 @@ function assertSafeIdentifier(name: string, label: string) {
   }
 }
 
-/** Always schema-qualified so queries work when search_path excludes public. */
+/** Quote identifiers when PostgreSQL would fold them (mixed case, etc.). */
+function quoteSqlIdentifier(name: string): string {
+  if (/^[a-z_][a-z0-9_]*$/.test(name)) {
+    return name
+  }
+  return `"${name.replace(/"/g, '""')}"`
+}
+
+/** Always schema-qualified; quoted when needed for PascalCase / mixed-case names. */
 export function formatQualifiedTableName(schema: string, table: string): string {
   assertSafeIdentifier(schema, 'schema name')
   assertSafeIdentifier(table, 'table name')
-  return `${schema}.${table}`
+  return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(table)}`
 }
 
 export type SchemaTable = {

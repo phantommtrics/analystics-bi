@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { reportBuilderApi, type SchemaColumn, type SchemaTable } from '../../api/reportBuilder'
 import { SearchableSelect } from '../ui/SearchableSelect'
 
-export type SqlInsertMode = 'append' | 'line1'
+export type SqlInsertMode = 'append' | 'line1' | 'replace'
 
 interface DatabaseTableExplorerProps {
   accessToken: string
@@ -26,6 +26,14 @@ function quoteSqlIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`
 }
 
+function buildQualifiedTableName(schema: string, table: string): string {
+  return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(table)}`
+}
+
+function buildSelectAllQuery(schema: string, table: string): string {
+  return `SELECT * FROM ${buildQualifiedTableName(schema, table)} LIMIT 100`
+}
+
 export function DatabaseTableExplorer({
   accessToken,
   dataSourceId,
@@ -44,7 +52,7 @@ export function DatabaseTableExplorer({
     () =>
       tables.map((t) => ({
         id: tableOptionId(t),
-        label: t.qualifiedName,
+        label: buildQualifiedTableName(t.schema, t.name),
         description: t.schema === 'public' ? undefined : `schema: ${t.schema}`,
       })),
     [tables],
@@ -164,7 +172,9 @@ export function DatabaseTableExplorer({
               <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
-                  onClick={() => onInsertFragment(selectedTable.qualifiedName)}
+                  onClick={() =>
+                    onInsertFragment(buildQualifiedTableName(selectedTable.schema, selectedTable.name))
+                  }
                   className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[10px] text-text-primary hover:bg-bg-secondary"
                 >
                   <i className="ti ti-table-plus text-xs"></i>
@@ -174,8 +184,8 @@ export function DatabaseTableExplorer({
                   type="button"
                   onClick={() =>
                     onInsertFragment(
-                      `SELECT * FROM ${selectedTable.qualifiedName} LIMIT 100`,
-                      'line1',
+                      buildSelectAllQuery(selectedTable.schema, selectedTable.name),
+                      'replace',
                     )
                   }
                   className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[10px] text-text-primary hover:bg-bg-secondary"

@@ -378,6 +378,13 @@ export function ReportBuilder() {
   const insertSqlFragment = useCallback(
     (fragment: string, mode: SqlInsertMode = 'append') => {
       const normalizedFragment = fragment.trim()
+      if (mode === 'replace') {
+        updateActiveTab({ sql: normalizedFragment })
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => sqlEditorRef.current?.focusAtStart())
+        })
+        return
+      }
       if (mode === 'line1') {
         const rest = activeTab.sql.trim()
         updateActiveTab({

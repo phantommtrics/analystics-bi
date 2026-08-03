@@ -727,6 +727,7 @@ export function ReportBuilder() {
               <DatabaseTableExplorer
                 accessToken={accessToken}
                 dataSourceId={activeTab.dataSourceId}
+                databaseName={activeDataSource?.database ?? ''}
                 onInsertFragment={insertSqlFragment}
               />
             )}

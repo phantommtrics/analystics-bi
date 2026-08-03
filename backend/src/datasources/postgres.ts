@@ -180,11 +180,42 @@ function quoteSqlIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`
 }
 
-/** Always schema-qualified; quoted when needed for PascalCase / mixed-case names. */
-export function formatQualifiedTableName(schema: string, table: string): string {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * PostgreSQL rejects schema.database.table in one session ("cross-database references").
+ * When the middle segment matches the connected database, rewrite to schema.table.
+ */
+export function normalizeCrossDatabaseReferences(sql: string, currentDatabase: string): string {
+  const database = currentDatabase.trim()
+  if (!database) return sql
+
+  let result = sql.replace(new RegExp(`\\.${escapeRegExp(database)}\\.`, 'gi'), '.')
+  result = result.replace(
+    new RegExp(`\\.\"${escapeRegExp(database.replace(/"/g, '""'))}\"\\.`, 'g'),
+    '.',
+  )
+  return result
+}
+
+/** schema.database.table for UI; quoted when needed for PascalCase / mixed-case names. */
+export function formatQualifiedTableName(
+  schema: string,
+  table: string,
+  database?: string,
+): string {
   assertSafeIdentifier(schema, 'schema name')
   assertSafeIdentifier(table, 'table name')
-  return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(table)}`
+  const schemaPart = quoteSqlIdentifier(schema)
+  const tablePart = quoteSqlIdentifier(table)
+  const db = database?.trim()
+  if (db) {
+    assertSafeIdentifier(db, 'database name')
+    return `${schemaPart}.${quoteSqlIdentifier(db)}.${tablePart}`
+  }
+  return `${schemaPart}.${tablePart}`
 }
 
 export type SchemaTable = {
@@ -235,7 +266,11 @@ export async function listSchemaTables(
     return result.rows.map((row) => ({
       schema: row.table_schema,
       name: row.table_name,
-      qualifiedName: formatQualifiedTableName(row.table_schema, row.table_name),
+      qualifiedName: formatQualifiedTableName(
+        row.table_schema,
+        row.table_name,
+        config.database,
+      ),
     }))
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to list tables'
@@ -305,7 +340,8 @@ export async function executeReadOnlyQuery(
     await configureReadOnlyClient(client)
     await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`)
 
-    const result = await client.query(sql.trim())
+    const normalizedSql = normalizeCrossDatabaseReferences(sql.trim(), config.database)
+    const result = await client.query(normalizedSql)
     const columns = result.fields.map((f) => f.name)
     const allRows = result.rows.map((row) => {
       const out: QueryRow = {}

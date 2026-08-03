@@ -7,6 +7,7 @@ export type SqlInsertMode = 'append' | 'line1' | 'replace'
 interface DatabaseTableExplorerProps {
   accessToken: string
   dataSourceId: string
+  databaseName: string
   onInsertFragment: (fragment: string, mode?: SqlInsertMode) => void
 }
 
@@ -26,17 +27,21 @@ function quoteSqlIdentifier(name: string): string {
   return `"${name.replace(/"/g, '""')}"`
 }
 
-function buildQualifiedTableName(schema: string, table: string): string {
-  return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(table)}`
+function buildQualifiedTableName(schema: string, table: string, database: string): string {
+  if (!database.trim()) {
+    return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(table)}`
+  }
+  return `${quoteSqlIdentifier(schema)}.${quoteSqlIdentifier(database)}.${quoteSqlIdentifier(table)}`
 }
 
-function buildSelectAllQuery(schema: string, table: string): string {
-  return `SELECT * FROM ${buildQualifiedTableName(schema, table)} LIMIT 100`
+function buildSelectAllQuery(schema: string, table: string, database: string): string {
+  return `SELECT * FROM ${buildQualifiedTableName(schema, table, database)} LIMIT 100`
 }
 
 export function DatabaseTableExplorer({
   accessToken,
   dataSourceId,
+  databaseName,
   onInsertFragment,
 }: DatabaseTableExplorerProps) {
   const [tables, setTables] = useState<SchemaTable[]>([])
@@ -52,10 +57,10 @@ export function DatabaseTableExplorer({
     () =>
       tables.map((t) => ({
         id: tableOptionId(t),
-        label: buildQualifiedTableName(t.schema, t.name),
+        label: buildQualifiedTableName(t.schema, t.name, databaseName),
         description: t.schema === 'public' ? undefined : `schema: ${t.schema}`,
       })),
-    [tables],
+    [tables, databaseName],
   )
 
   const selectedTable = useMemo(() => {
@@ -173,7 +178,13 @@ export function DatabaseTableExplorer({
                 <button
                   type="button"
                   onClick={() =>
-                    onInsertFragment(buildQualifiedTableName(selectedTable.schema, selectedTable.name))
+                    onInsertFragment(
+                      buildQualifiedTableName(
+                        selectedTable.schema,
+                        selectedTable.name,
+                        databaseName,
+                      ),
+                    )
                   }
                   className="inline-flex items-center gap-1 rounded-sm border border-border px-2 py-1 text-[10px] text-text-primary hover:bg-bg-secondary"
                 >
@@ -184,7 +195,11 @@ export function DatabaseTableExplorer({
                   type="button"
                   onClick={() =>
                     onInsertFragment(
-                      buildSelectAllQuery(selectedTable.schema, selectedTable.name),
+                      buildSelectAllQuery(
+                        selectedTable.schema,
+                        selectedTable.name,
+                        databaseName,
+                      ),
                       'replace',
                     )
                   }

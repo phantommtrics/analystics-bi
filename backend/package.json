@@ -12,7 +12,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
     "seed:dashboard-reports": "tsx scripts/seed-dashboard-reports.ts --validate --seed",
-    "test": "tsx --test src/partner-agent-float/crypto.test.ts"
+    "test": "tsx --test src/partner-agent-float/crypto.test.ts src/datasources/postgres.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

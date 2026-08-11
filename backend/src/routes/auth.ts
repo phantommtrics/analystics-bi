@@ -265,5 +265,9 @@ authRouter.post('/change-password', authenticate, async (req, res) => {
     ipAddress: clientIp(req),
   })
 
-  return res.json({ message: 'Password updated' })
+  return res.json({
+    message: 'Password updated',
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+  })
 })

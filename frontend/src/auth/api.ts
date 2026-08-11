@@ -51,7 +51,7 @@ export async function changePassword(
   accessToken: string,
   currentPassword: string,
   newPassword: string,
-): Promise<void> {
+): Promise<{ accessToken: string; refreshToken: string }> {
   const response = await fetch(`${API_BASE}/auth/change-password`, {
     method: 'POST',
     headers: {
@@ -64,4 +64,5 @@ export async function changePassword(
     const body = await response.json().catch(() => ({}))
     throw new Error((body as { message?: string }).message ?? 'Failed to change password')
   }
+  return response.json()
 }

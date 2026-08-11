@@ -1,5 +1,19 @@
-const CACHE_NAME = 'aps-bi-v1'
+const CACHE_NAME = 'aps-bi-v2'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.svg', '/icons/icon-512.svg']
+
+function shouldCacheRequest(request) {
+  if (request.method !== 'GET') return false
+
+  const url = new URL(request.url)
+  // Same-origin API calls must never be cached — stale lists hide new orgs, datasources, etc.
+  if (url.pathname.startsWith('/api/')) return false
+
+  return (
+    APP_SHELL.includes(url.pathname) ||
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.startsWith('/icons/')
+  )
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -22,7 +36,7 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return
+  if (!shouldCacheRequest(event.request)) return
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
@@ -30,8 +44,10 @@ self.addEventListener('fetch', (event) => {
 
       return fetch(event.request)
         .then((response) => {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          if (response.ok) {
+            const copy = response.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+          }
           return response
         })
         .catch(() => caches.match('/'))

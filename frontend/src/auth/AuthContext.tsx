@@ -71,8 +71,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!accessToken) {
       throw new Error('Not authenticated')
     }
-    await changePasswordRequest(accessToken, currentPassword, newPassword)
-    const profile = await me(accessToken)
+    const tokens = await changePasswordRequest(accessToken, currentPassword, newPassword)
+    setAccessToken(tokens.accessToken)
+    localStorage.setItem(REFRESH_KEY, tokens.refreshToken)
+    const profile = await me(tokens.accessToken)
     setUser(profile)
   }
 

@@ -92,7 +92,21 @@ export async function changePassword(
     data: { status: TokenStatus.REVOKED },
   })
 
-  return { ok: true as const }
+  const accessToken = signAccessToken({
+    sub: user.id,
+    userType: user.userType,
+  })
+  const refreshToken = signRefreshToken({ sub: user.id, tokenId: cryptoRandom() })
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: hashToken(refreshToken),
+      userId: user.id,
+      expiresAt: new Date(Date.now() + refreshTtlMs),
+      status: TokenStatus.ACTIVE,
+    },
+  })
+
+  return { ok: true as const, accessToken, refreshToken }
 }
 
 export async function rotateRefreshToken(refreshToken: string) {

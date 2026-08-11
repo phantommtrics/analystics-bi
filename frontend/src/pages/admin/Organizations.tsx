@@ -204,19 +204,19 @@ export function Organizations() {
   const [editForm, setEditForm] = useState<OrgFormState>(emptyForm())
 
   const loadData = useCallback(async () => {
-    if (!accessToken) return
+    if (!accessToken || user?.userType !== 'OWNER') return
     const list = await adminApi.listOrganizations(accessToken)
     setOrgs(list)
     if (list.length === 0) setShowCreatePanel(true)
-  }, [accessToken])
+  }, [accessToken, user?.userType])
 
   useEffect(() => {
-    if (!accessToken) return
+    if (!accessToken || user?.userType !== 'OWNER') return
     setLoading(true)
     loadData()
       .catch((err) => setErrorAlert(alertFromUnknown(err, 'Could not load organizations', 'Failed to load')))
       .finally(() => setLoading(false))
-  }, [accessToken, loadData])
+  }, [accessToken, loadData, user?.userType])
 
   useEffect(() => {
     if (user?.email && !createForm.billingOwnerEmail) {

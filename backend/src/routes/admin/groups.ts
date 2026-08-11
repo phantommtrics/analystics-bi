@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { UserType } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
@@ -21,7 +22,28 @@ const updateGroupSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional().nullable(),
   roleId: z.string().min(1).optional(),
+  memberIds: z.array(z.string().min(1)).optional(),
 })
+
+type GroupMemberRow = {
+  user: {
+    id: string
+    username: string
+    email: string
+    displayName: string | null
+    status: string
+  }
+}
+
+function formatMembers(members: GroupMemberRow[]) {
+  return members.map((m) => ({
+    id: m.user.id,
+    username: m.user.username,
+    email: m.user.email,
+    displayName: m.user.displayName,
+    status: m.user.status,
+  }))
+}
 
 function formatGroup(group: {
   id: string
@@ -34,6 +56,7 @@ function formatGroup(group: {
   createdAt: Date
   updatedAt: Date
   _count: { members: number }
+  members?: GroupMemberRow[]
 }) {
   return {
     id: group.id,
@@ -44,6 +67,7 @@ function formatGroup(group: {
     organizationId: group.organizationId,
     organizationName: group.organization.name,
     memberCount: group._count.members,
+    members: group.members ? formatMembers(group.members) : undefined,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
   }
@@ -55,6 +79,48 @@ const groupInclude = {
   _count: { select: { members: true } },
 } as const
 
+const groupDetailInclude = {
+  ...groupInclude,
+  members: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          displayName: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: { user: { username: 'asc' as const } },
+  },
+} as const
+
+async function assertGroupInScope(
+  req: Parameters<typeof resolveOrganizationId>[0],
+  groupId: string,
+) {
+  const group = await prisma.userGroup.findUnique({
+    where: { id: groupId },
+    select: { id: true, organizationId: true },
+  })
+  if (!group) return null
+
+  if (req.authUser?.userType === UserType.OWNER) {
+    const listFilter = await organizationListWhere(req)
+    if (listFilter.organizationId && group.organizationId !== listFilter.organizationId) {
+      return null
+    }
+    return group
+  }
+
+  if (group.organizationId !== req.authUser?.organizationId) {
+    return null
+  }
+  return group
+}
+
 groupsRouter.get(
   '/',
   authorizeAny([
@@ -63,19 +129,24 @@ groupsRouter.get(
     ['system-config-operators', 'edit'],
   ]),
   async (req, res) => {
-  const groups = await prisma.userGroup.findMany({
-    where: await organizationListWhere(req),
-    include: groupInclude,
-    orderBy: { name: 'asc' },
-  })
-  return res.json(groups.map(formatGroup))
-},
+    const groups = await prisma.userGroup.findMany({
+      where: await organizationListWhere(req),
+      include: groupInclude,
+      orderBy: { name: 'asc' },
+    })
+    return res.json(groups.map(formatGroup))
+  },
 )
 
 groupsRouter.get('/:id', authorize('system-config-groups', 'view'), async (req, res) => {
+  const scoped = await assertGroupInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Group not found' })
+  }
+
   const group = await prisma.userGroup.findUnique({
-    where: { id: paramId(req) },
-    include: groupInclude,
+    where: { id: scoped.id },
+    include: groupDetailInclude,
   })
   if (!group) {
     return res.status(404).json({ message: 'Group not found' })
@@ -107,7 +178,7 @@ groupsRouter.post('/', authorize('system-config-groups', 'edit'), async (req, re
         roleId: parsed.data.roleId,
         organizationId,
       },
-      include: groupInclude,
+      include: groupDetailInclude,
     })
     return res.status(201).json(formatGroup(group))
   } catch {
@@ -121,6 +192,11 @@ groupsRouter.patch('/:id', authorize('system-config-groups', 'edit'), async (req
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
+  const scoped = await assertGroupInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Group not found' })
+  }
+
   if (parsed.data.roleId) {
     const role = await prisma.role.findUnique({ where: { id: parsed.data.roleId } })
     if (!role) {
@@ -128,12 +204,65 @@ groupsRouter.patch('/:id', authorize('system-config-groups', 'edit'), async (req
     }
   }
 
+  if (parsed.data.memberIds) {
+    const memberIds = [...new Set(parsed.data.memberIds)]
+    if (memberIds.length > 0) {
+      const operators = await prisma.user.findMany({
+        where: {
+          id: { in: memberIds },
+          userType: UserType.SYSTEM_USER,
+          organizationId: scoped.organizationId,
+        },
+        select: { id: true },
+      })
+      if (operators.length !== memberIds.length) {
+        return res.status(400).json({
+          message: 'All members must be system operators in this group\'s organization',
+        })
+      }
+    }
+  }
+
   try {
-    const group = await prisma.userGroup.update({
-      where: { id: paramId(req) },
-      data: parsed.data,
-      include: groupInclude,
+    const group = await prisma.$transaction(async (tx) => {
+      await tx.userGroup.update({
+        where: { id: scoped.id },
+        data: {
+          ...(parsed.data.name !== undefined && { name: parsed.data.name }),
+          ...(parsed.data.description !== undefined && { description: parsed.data.description }),
+          ...(parsed.data.roleId !== undefined && { roleId: parsed.data.roleId }),
+        },
+      })
+
+      if (parsed.data.memberIds) {
+        const memberIds = [...new Set(parsed.data.memberIds)]
+        const existing = await tx.userGroupMember.findMany({
+          where: { groupId: scoped.id },
+          select: { userId: true },
+        })
+        const existingIds = new Set(existing.map((m) => m.userId))
+        const desiredIds = new Set(memberIds)
+        const toRemove = [...existingIds].filter((id) => !desiredIds.has(id))
+        const toAdd = memberIds.filter((id) => !existingIds.has(id))
+
+        if (toRemove.length > 0) {
+          await tx.userGroupMember.deleteMany({
+            where: { groupId: scoped.id, userId: { in: toRemove } },
+          })
+        }
+        if (toAdd.length > 0) {
+          await tx.userGroupMember.createMany({
+            data: toAdd.map((userId) => ({ userId, groupId: scoped.id })),
+          })
+        }
+      }
+
+      return tx.userGroup.findUniqueOrThrow({
+        where: { id: scoped.id },
+        include: groupDetailInclude,
+      })
     })
+
     return res.json(formatGroup(group))
   } catch {
     return res.status(404).json({ message: 'Group not found' })
@@ -141,8 +270,13 @@ groupsRouter.patch('/:id', authorize('system-config-groups', 'edit'), async (req
 })
 
 groupsRouter.delete('/:id', authorize('system-config-groups', 'delete'), async (req, res) => {
+  const scoped = await assertGroupInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Group not found' })
+  }
+
   const group = await prisma.userGroup.findUnique({
-    where: { id: paramId(req) },
+    where: { id: scoped.id },
     include: { _count: { select: { members: true } } },
   })
   if (!group) {

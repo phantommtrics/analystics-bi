@@ -62,7 +62,17 @@ export interface GroupSummary {
   memberCount: number
 }
 
-export interface GroupDetail extends GroupSummary {}
+export interface GroupMember {
+  id: string
+  username: string
+  email: string
+  displayName: string | null
+  status: string
+}
+
+export interface GroupDetail extends GroupSummary {
+  members?: GroupMember[]
+}
 
 export interface OperatorSummary {
   id: string
@@ -133,9 +143,14 @@ export const adminApi = {
   updateGroup: (
     token: string,
     id: string,
-    data: { name?: string; description?: string | null; roleId?: string },
+    data: {
+      name?: string
+      description?: string | null
+      roleId?: string
+      memberIds?: string[]
+    },
   ) =>
-    adminFetch<GroupSummary>(`/groups/${id}`, token, {
+    adminFetch<GroupDetail>(`/groups/${id}`, token, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),

@@ -5,13 +5,22 @@ import { ConfirmModal } from '../../components/ui/ConfirmModal'
 import { DataTable } from '../../components/ui/DataTable'
 import { ExpandableCard } from '../../components/ui/ExpandableCard'
 import { LoadingButton } from '../../components/ui/LoadingButton'
+import { MultiSelectDropdown } from '../../components/ui/MultiSelectDropdown'
 import { SearchableSelect } from '../../components/ui/SearchableSelect'
-import { adminApi, type GroupSummary, type OrganizationSummary, type RoleSummary } from '../../api/admin'
+import {
+  adminApi,
+  type GroupDetail,
+  type GroupSummary,
+  type OperatorSummary,
+  type OrganizationSummary,
+  type RoleSummary,
+} from '../../api/admin'
 import { useAuth } from '../../auth/AuthContext'
+import { setsEqual } from '../../lib/setUtils'
 
 type PendingAction =
   | { type: 'create' }
-  | { type: 'saveRole' }
+  | { type: 'save' }
   | { type: 'delete'; groupId: string; groupName: string }
   | null
 
@@ -20,10 +29,20 @@ export function UserGroups() {
   const [groups, setGroups] = useState<GroupSummary[]>([])
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
   const [roles, setRoles] = useState<RoleSummary[]>([])
+  const [operators, setOperators] = useState<OperatorSummary[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
-  const [savedRoleId, setSavedRoleId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editMemberIds, setEditMemberIds] = useState<string[]>([])
+  const [savedSnapshot, setSavedSnapshot] = useState<{
+    name: string
+    description: string
+    roleId: string
+    memberIds: string[]
+  } | null>(null)
   const [loading, setLoading] = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -38,10 +57,22 @@ export function UserGroups() {
   const defaultOrgId =
     organizations.find((o) => o.isDefault)?.id ?? organizations[0]?.id ?? ''
 
-  const roleDirty =
-    selectedGroupId !== null &&
-    selectedRoleId !== null &&
-    selectedRoleId !== savedRoleId
+  const dirty = useMemo(() => {
+    if (!selectedGroupId || !savedSnapshot || !selectedRoleId) return false
+    return (
+      editName.trim() !== savedSnapshot.name ||
+      editDescription.trim() !== savedSnapshot.description ||
+      selectedRoleId !== savedSnapshot.roleId ||
+      !setsEqual(new Set(editMemberIds), new Set(savedSnapshot.memberIds))
+    )
+  }, [
+    selectedGroupId,
+    savedSnapshot,
+    editName,
+    editDescription,
+    selectedRoleId,
+    editMemberIds,
+  ])
 
   const roleOptions = useMemo(
     () =>
@@ -53,19 +84,53 @@ export function UserGroups() {
     [roles],
   )
 
+  const memberOptions = useMemo(() => {
+    const selectedGroup = groups.find((g) => g.id === selectedGroupId)
+    if (!selectedGroup) return []
+    return operators
+      .filter((op) => op.organizationId === selectedGroup.organizationId)
+      .map((op) => ({
+        id: op.id,
+        label: op.displayName?.trim() || op.username,
+        description: op.email,
+      }))
+  }, [operators, groups, selectedGroupId])
+
   const loadData = useCallback(async () => {
     if (!accessToken) return
     const orgList = isOwner ? await adminApi.listOrganizations(accessToken) : []
-    const groupList = await adminApi.listGroups(accessToken)
-    const roleList = await adminApi.listRoles(accessToken)
+    const [groupList, roleList, operatorList] = await Promise.all([
+      adminApi.listGroups(accessToken),
+      adminApi.listRoles(accessToken),
+      adminApi.listOperators(accessToken),
+    ])
     setOrganizations(orgList)
     setGroups(groupList)
     setRoles(roleList)
+    setOperators(operatorList)
     if (!formOrganizationId) {
-      const orgId = orgList.find((o) => o.isDefault)?.id ?? orgList[0]?.id ?? ''
+      const orgId =
+        orgList.find((o) => o.isDefault)?.id ??
+        orgList[0]?.id ??
+        user?.organization?.id ??
+        ''
       if (orgId) setFormOrganizationId(orgId)
     }
-  }, [accessToken, formOrganizationId, isOwner])
+  }, [accessToken, formOrganizationId, isOwner, user?.organization?.id])
+
+  const applyGroupDetail = useCallback((detail: GroupDetail) => {
+    const memberIds = (detail.members ?? []).map((m) => m.id)
+    setEditName(detail.name)
+    setEditDescription(detail.description ?? '')
+    setSelectedRoleId(detail.roleId)
+    setEditMemberIds(memberIds)
+    setSavedSnapshot({
+      name: detail.name,
+      description: detail.description ?? '',
+      roleId: detail.roleId,
+      memberIds,
+    })
+  }, [])
 
   useEffect(() => {
     if (!accessToken) return
@@ -78,17 +143,19 @@ export function UserGroups() {
   useEffect(() => {
     if (!accessToken || !selectedGroupId) {
       setSelectedRoleId(null)
-      setSavedRoleId(null)
+      setEditName('')
+      setEditDescription('')
+      setEditMemberIds([])
+      setSavedSnapshot(null)
       return
     }
+    setDetailLoading(true)
     adminApi
       .getGroup(accessToken, selectedGroupId)
-      .then((g) => {
-        setSelectedRoleId(g.roleId)
-        setSavedRoleId(g.roleId)
-      })
+      .then(applyGroupDetail)
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load group'))
-  }, [accessToken, selectedGroupId])
+      .finally(() => setDetailLoading(false))
+  }, [accessToken, selectedGroupId, applyGroupDetail])
 
   async function executeCreate() {
     if (!accessToken || !formName.trim() || !formRoleId) return
@@ -116,18 +183,24 @@ export function UserGroups() {
     }
   }
 
-  async function executeSaveRole() {
-    if (!accessToken || !selectedGroupId || !selectedRoleId || !roleDirty) return
+  async function executeSave() {
+    if (!accessToken || !selectedGroupId || !selectedRoleId || !dirty) return
     setActionLoading(true)
     setSuccess('')
+    setError('')
     try {
-      await adminApi.updateGroup(accessToken, selectedGroupId, { roleId: selectedRoleId })
-      setSavedRoleId(selectedRoleId)
+      const updated = await adminApi.updateGroup(accessToken, selectedGroupId, {
+        name: editName.trim(),
+        description: editDescription.trim() || null,
+        roleId: selectedRoleId,
+        memberIds: editMemberIds,
+      })
+      applyGroupDetail(updated)
       await loadData()
       await refreshUser()
-      setSuccess('Group role saved. Member permissions update on next login.')
+      setSuccess('Group saved. Member permissions update on next login.')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save role')
+      setError(err instanceof Error ? err.message : 'Failed to save group')
     } finally {
       setActionLoading(false)
       setPending(null)
@@ -181,7 +254,8 @@ export function UserGroups() {
               <CardTitle>Create user group</CardTitle>
             </CardHeader>
             <p className="mb-4 text-sm text-text-secondary">
-              Each group maps to exactly one role set. Operators inherit permissions from their assigned groups.
+              Each group maps to exactly one role set. Assign operators as members so they inherit
+              that role&apos;s permissions.
             </p>
             <div className="grid gap-4 md:grid-cols-2">
               {isOwner && organizations.length > 0 && (
@@ -288,17 +362,17 @@ export function UserGroups() {
           </ExpandableCard>
 
           <ExpandableCard
-            title={selectedGroup ? `${selectedGroup.name} — role set` : 'Select a group'}
+            title={selectedGroup ? `${selectedGroup.name}` : 'Select a group'}
             action={
               selectedGroupId ? (
                 <div className="flex gap-2">
                   <LoadingButton
-                    loading={actionLoading && pending?.type === 'saveRole'}
-                    disabled={!selectedRoleId || !roleDirty}
+                    loading={actionLoading && pending?.type === 'save'}
+                    disabled={!selectedRoleId || !editName.trim() || !dirty}
                     className="px-3 py-1.5 text-xs"
-                    onClick={() => setPending({ type: 'saveRole' })}
+                    onClick={() => setPending({ type: 'save' })}
                   >
-                    Save role
+                    Save
                   </LoadingButton>
                   {selectedGroup && selectedGroup.memberCount === 0 && (
                     <LoadingButton
@@ -324,27 +398,65 @@ export function UserGroups() {
               ) : null
             }
           >
-            {selectedGroupId ? (
-              <div>
-                {roleDirty && (
-                  <p className="mb-3 text-xs text-amber-700">Unsaved role assignment</p>
-                )}
-                <label className="mb-1.5 block text-sm font-medium">Assigned role set</label>
-                <SearchableSelect
-                  options={roleOptions}
-                  value={selectedRoleId}
-                  onChange={setSelectedRoleId}
-                  placeholder="Select role set..."
-                  searchPlaceholder="Search roles..."
-                />
-                <p className="mt-3 text-xs text-text-secondary">
-                  All members of this group receive permissions from the selected role only.
-                </p>
-              </div>
-            ) : (
+            {!selectedGroupId ? (
               <p className="text-sm text-text-secondary">
-                Select a group to view or change its role set assignment.
+                Select a group to edit its name, role set, and members.
               </p>
+            ) : detailLoading ? (
+              <p className="text-sm text-text-secondary">Loading group...</p>
+            ) : (
+              <div className="space-y-4">
+                {dirty && (
+                  <p className="text-xs text-amber-700">Unsaved changes</p>
+                )}
+                {isOwner && selectedGroup && (
+                  <p className="text-xs text-text-secondary">
+                    Organization: {selectedGroup.organizationName}
+                  </p>
+                )}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Group name</label>
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Description</label>
+                  <input
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    className="w-full rounded-md border border-border px-3 py-2 text-sm"
+                    placeholder="Optional"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Assigned role set</label>
+                  <SearchableSelect
+                    options={roleOptions}
+                    value={selectedRoleId}
+                    onChange={setSelectedRoleId}
+                    placeholder="Select role set..."
+                    searchPlaceholder="Search roles..."
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Members</label>
+                  <MultiSelectDropdown
+                    options={memberOptions}
+                    selectedIds={editMemberIds}
+                    onChange={setEditMemberIds}
+                    placeholder="Select operators..."
+                    searchPlaceholder="Search operators..."
+                    emptyMessage="No operators in this organization. Invite them under Operators first."
+                  />
+                  <p className="mt-2 text-xs text-text-secondary">
+                    Members inherit permissions from the role set above. You can also assign groups
+                    from Operators.
+                  </p>
+                </div>
+              </div>
             )}
           </ExpandableCard>
         </div>
@@ -361,12 +473,12 @@ export function UserGroups() {
       />
 
       <ConfirmModal
-        open={pending?.type === 'saveRole'}
-        title="Save role assignment?"
-        message={`Update role set for "${selectedGroup?.name}"? Members will receive updated permissions on next login.`}
+        open={pending?.type === 'save'}
+        title="Save group?"
+        message={`Update "${selectedGroup?.name}"? Members receive updated permissions on next login.`}
         confirmLabel="Save"
         loading={actionLoading}
-        onConfirm={executeSaveRole}
+        onConfirm={executeSave}
         onCancel={() => setPending(null)}
       />
 

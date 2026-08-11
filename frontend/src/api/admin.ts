@@ -42,6 +42,7 @@ export interface RoleSummary {
   name: string
   description: string | null
   userCount: number
+  groupCount?: number
   permissionCount: number
 }
 

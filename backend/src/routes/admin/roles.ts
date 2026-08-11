@@ -116,20 +116,33 @@ rolesRouter.get(
   async (_req, res) => {
   const roles = await prisma.role.findMany({
     include: {
-      _count: { select: { users: true, permissions: true } },
+      _count: { select: { permissions: true, groups: true } },
+      users: { select: { userId: true } },
+      groups: {
+        select: {
+          members: { select: { userId: true } },
+        },
+      },
     },
     orderBy: { name: 'asc' },
   })
   return res.json(
-    roles.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description,
-      userCount: r._count.users,
-      permissionCount: r._count.permissions,
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-    })),
+    roles.map((r) => {
+      const userIds = new Set([
+        ...r.users.map((u) => u.userId),
+        ...r.groups.flatMap((g) => g.members.map((m) => m.userId)),
+      ])
+      return {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        userCount: userIds.size,
+        groupCount: r._count.groups,
+        permissionCount: r._count.permissions,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }
+    }),
   )
 },
 )
@@ -139,17 +152,28 @@ rolesRouter.get('/:id', authorize('system-config-roles', 'view'), async (req, re
     where: { id: paramId(req) },
     include: {
       permissions: { include: { permission: true } },
-      _count: { select: { users: true } },
+      _count: { select: { groups: true } },
+      users: { select: { userId: true } },
+      groups: {
+        select: {
+          members: { select: { userId: true } },
+        },
+      },
     },
   })
   if (!role) {
     return res.status(404).json({ message: 'Role not found' })
   }
+  const userIds = new Set([
+    ...role.users.map((u) => u.userId),
+    ...role.groups.flatMap((g) => g.members.map((m) => m.userId)),
+  ])
   return res.json({
     id: role.id,
     name: role.name,
     description: role.description,
-    userCount: role._count.users,
+    userCount: userIds.size,
+    groupCount: role._count.groups,
     permissionIds: role.permissions.map((rp) => rp.permissionId),
     permissions: role.permissions.map((rp) => rp.permission),
   })

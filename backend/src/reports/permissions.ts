@@ -133,6 +133,52 @@ export function userCanViewReport(
   return hasExplicitCustomReportView(permissions, reportId)
 }
 
+/** Report IDs embedded in published dashboards the user can view. */
+export async function reportIdsAccessibleViaDashboards(
+  permissions: string[],
+  userType?: UserType,
+): Promise<Set<string>> {
+  if (userType === UserType.OWNER || permissions.includes('*')) {
+    return new Set()
+  }
+
+  const { hasDashboardParentView, hasExplicitCustomDashboardView } = await import(
+    '../dashboards/permissions.js'
+  )
+  if (!hasDashboardParentView(permissions)) {
+    return new Set()
+  }
+
+  const { extractReportIdsFromLayout, parseDashboardLayout } = await import(
+    '../dashboards/layout.js'
+  )
+
+  const dashboards = await prisma.dashboard.findMany({
+    where: { deletedAt: null, isPublished: true },
+    select: { id: true, layout: true },
+  })
+
+  const ids = new Set<string>()
+  for (const dashboard of dashboards) {
+    if (!hasExplicitCustomDashboardView(permissions, dashboard.id)) continue
+    for (const reportId of extractReportIdsFromLayout(parseDashboardLayout(dashboard.layout))) {
+      ids.add(reportId)
+    }
+  }
+  return ids
+}
+
+export async function userCanAccessPublishedReport(
+  permissions: string[],
+  reportId: string,
+  userType?: UserType,
+): Promise<boolean> {
+  if (userCanViewReport(permissions, reportId, userType)) return true
+  if (!hasReportsParentView(permissions)) return false
+  const viaDashboards = await reportIdsAccessibleViaDashboards(permissions, userType)
+  return viaDashboards.has(reportId)
+}
+
 function hasReportsParentExport(
   permissions: string[],
   action: 'export_pdf' | 'export_csv',

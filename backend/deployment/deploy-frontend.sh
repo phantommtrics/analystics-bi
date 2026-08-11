@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REMOTE="${1:-}"
 REMOTE_PATH="/var/www/web-prixbi"
 
-echo "==> Building frontend"
+echo "==> Building frontend (on this machine — do not run npm build on small VPS)"
 cd "$ROOT/frontend"
 npm ci
 npm run build

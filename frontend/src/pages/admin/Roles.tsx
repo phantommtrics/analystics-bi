@@ -205,6 +205,11 @@ export function Roles() {
                     className: 'text-sm text-text-secondary',
                   },
                   {
+                    header: 'Groups',
+                    accessor: (r) => r.groupCount ?? 0,
+                    className: 'text-sm text-text-secondary',
+                  },
+                  {
                     header: 'Permissions',
                     accessor: (r) => r.permissionCount,
                     className: 'text-sm text-text-secondary',
@@ -231,6 +236,10 @@ export function Roles() {
           >
             {selectedRoleId && catalog ? (
               <>
+                <p className="mb-3 text-xs text-text-secondary">
+                  Org operators get this role through User Groups, not a direct role assignment.
+                  Confirm the operator&apos;s group is linked to this role.
+                </p>
                 {permissionsDirty && (
                   <p className="mb-3 text-xs text-amber-700">Unsaved changes to this permission set</p>
                 )}

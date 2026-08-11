@@ -63,7 +63,9 @@ curl -s http://127.0.0.1:4000/api/health
 
 ## 3. Build and upload the frontend
 
-From your dev machine (repo root):
+**Prefer building on your laptop/CI**, then upload `dist/`. Small live servers often OOM-kill `npm ci && npm run build` (process exits with `Killed`, no Node stack trace).
+
+From your **dev machine** (repo root):
 
 ```bash
 bash backend/deployment/deploy-frontend.sh user@your-server
@@ -73,8 +75,7 @@ Or manually:
 
 ```bash
 cd frontend
-npm ci && npm run build    # uses frontend/.env.production 
-VITE_API_BASE_URL=/api
+npm ci && npm run build    # uses frontend/.env.production; set VITE_API_BASE_URL=/api if needed
 rsync -av --delete dist/ user@server:/var/www/web-prixbi/
 ```
 
@@ -197,3 +198,41 @@ No nginx reload needed for static-only frontend updates.
 | Mixed content errors | Use HTTPS for both frontend and `APP_PUBLIC_URL` |
 | 502 on `/api/` | Node not on 4000 — `pm2 restart prixbi-backend` |
 | CORS errors | Add production URL to `CORS_ORIGIN` in backend `.env` |
+| `npm ci` / `npm run build` exits with `Killed` | Linux OOM — see below |
+
+### `npm …` gets `Killed` on the live server
+
+That is the kernel **out-of-memory killer**, not a normal npm/TypeScript error. Vite + `tsc` + `npm ci` often need **>1–2 GB RAM**; many sandbox VPS have 1 GB or less.
+
+**Confirm:**
+
+```bash
+free -h
+dmesg -T | tail -50 | grep -i -E 'killed process|out of memory|oom'
+```
+
+**Fix (recommended):** build frontend on your machine and rsync (section 3 / `deploy-frontend.sh`). Only run backend `npm ci` / `npm run build` on the server if you have enough RAM or swap.
+
+**If you must build on the server**, add swap first, then cap Node’s heap and skip the extra `tsc` pass for frontend:
+
+```bash
+# One-time: 2G swap (survives until reboot; make permanent via /etc/fstab if needed)
+sudo fallocate -l 2G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+free -h
+
+# Frontend (lighter than npm run build)
+cd /path/to/biReports/frontend
+NODE_OPTIONS=--max-old-space-size=768 npm ci
+NODE_OPTIONS=--max-old-space-size=768 npm run build:prod
+
+# Backend
+cd /path/to/biReports/backend
+NODE_OPTIONS=--max-old-space-size=768 npm ci
+NODE_OPTIONS=--max-old-space-size=768 npm run prisma:generate
+NODE_OPTIONS=--max-old-space-size=768 npm run build
+```
+
+Also free RAM before building: stop heavy processes temporarily (`pm2 stop prixbi-backend`), then start them again after the build.

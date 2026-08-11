@@ -1,10 +1,20 @@
-const CACHE_NAME = 'aps-bi-v2'
+const CACHE_NAME = 'aps-bi-v3'
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.svg', '/icons/icon-512.svg']
 
 function shouldCacheRequest(request) {
   if (request.method !== 'GET') return false
 
-  const url = new URL(request.url)
+  let url
+  try {
+    url = new URL(request.url)
+  } catch {
+    return false
+  }
+
+  // Cache API only supports http(s). Ignore extensions and other schemes.
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+  if (url.origin !== self.location.origin) return false
+
   // Same-origin API calls must never be cached — stale lists hide new orgs, datasources, etc.
   if (url.pathname.startsWith('/api/')) return false
 
@@ -46,7 +56,9 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response.ok) {
             const copy = response.clone()
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy))
+            caches.open(CACHE_NAME).then((cache) =>
+              cache.put(event.request, copy).catch(() => undefined),
+            )
           }
           return response
         })

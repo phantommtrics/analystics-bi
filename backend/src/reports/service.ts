@@ -2,7 +2,6 @@ import { Prisma, ReportCategory, ReportVisualization, UserType } from '@prisma/c
 import { prisma } from '../prisma.js'
 import {
   hasExplicitCustomReportView,
-  hasReportsParentView,
   removeReportPermissions,
   syncReportPermissions,
 } from './permissions.js'
@@ -143,6 +142,73 @@ export async function listSavedReports(options?: {
   return reports.map(formatListItem)
 }
 
+/**
+ * Report Builder saved list: Owner sees all orgs.
+ * System users see any report they have explicit view on (cross-org),
+ * plus unpublished drafts in their own org or that they created.
+ */
+export async function listBuilderReports(
+  permissions: string[],
+  userType: UserType | undefined,
+  options?: {
+    category?: ReportCategory
+    search?: string
+    includeDeleted?: boolean
+    userId?: string
+    userOrganizationId?: string | null
+  },
+): Promise<SavedReportListItem[]> {
+  if (userType === UserType.OWNER || permissions.includes('*')) {
+    return listSavedReports({
+      category: options?.category,
+      search: options?.search,
+      includeDeleted: options?.includeDeleted,
+    })
+  }
+
+  const where: Prisma.SavedReportWhereInput = {}
+  if (!options?.includeDeleted) {
+    where.deletedAt = null
+  }
+  if (options?.category) {
+    where.category = options.category
+  }
+  if (options?.search?.trim()) {
+    const q = options.search.trim()
+    where.OR = [
+      { name: { contains: q, mode: 'insensitive' } },
+      { description: { contains: q, mode: 'insensitive' } },
+    ]
+  }
+
+  const reports = await prisma.savedReport.findMany({
+    where,
+    include: reportInclude,
+    orderBy: [{ updatedAt: 'desc' }],
+  })
+
+  const userId = options?.userId
+  const userOrgId = options?.userOrganizationId ?? null
+
+  return reports
+    .filter((report) => {
+      if (hasExplicitCustomReportView(permissions, report.id)) {
+        return true
+      }
+      if (report.isPublished) {
+        return false
+      }
+      if (userId && report.createdById === userId) {
+        return true
+      }
+      if (userOrgId && report.organizationId === userOrgId) {
+        return true
+      }
+      return false
+    })
+    .map(formatListItem)
+}
+
 export async function listSavedReportsByIds(ids: string[]): Promise<SavedReportListItem[]> {
   if (ids.length === 0) {
     return []
@@ -162,21 +228,15 @@ export async function listAccessibleReports(
   options?: {
     category?: ReportCategory
     search?: string
-    organizationId?: string
   },
   userType?: UserType,
 ): Promise<SavedReportListItem[]> {
-  if (!hasReportsParentView(permissions)) {
-    return []
-  }
-
+  // Catalog access is permission-based, not organization-scoped.
+  // System users only see reports they were explicitly granted (any org).
+  // Owner sees every published report.
   const where: Prisma.SavedReportWhereInput = {
     deletedAt: null,
     isPublished: true,
-  }
-
-  if (options?.organizationId) {
-    where.organizationId = options.organizationId
   }
 
   if (options?.category) {
@@ -201,6 +261,8 @@ export async function listAccessibleReports(
     return reports.map(formatListItem)
   }
 
+  // Prefer parent reports:view + per-report grants; still surface explicitly granted
+  // reports if the parent module was omitted from the role.
   return reports
     .map(formatListItem)
     .filter((report) => hasExplicitCustomReportView(permissions, report.id))
@@ -209,9 +271,8 @@ export async function listAccessibleReports(
 export async function listAccessibleSidebarReports(
   permissions: string[],
   userType?: UserType,
-  organizationId?: string,
 ): Promise<SavedReportListItem[]> {
-  const reports = await listAccessibleReports(permissions, { organizationId }, userType)
+  const reports = await listAccessibleReports(permissions, {}, userType)
   return reports.filter((report) => report.showInSidebarMenu)
 }
 

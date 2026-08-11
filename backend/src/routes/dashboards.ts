@@ -59,6 +59,7 @@ dashboardsRouter.get('/', async (req, res) => {
 
   if (accessibleOnly) {
     await ensureAllDashboardPermissions()
+    // Access is permission-based (cross-org). Do not scope by organizationId.
     if (sidebarMenuOnly) {
       const dashboards = await listAccessibleSidebarDashboards(
         permissions,
@@ -70,7 +71,6 @@ dashboardsRouter.get('/', async (req, res) => {
       permissions,
       search,
       req.authUser?.userType,
-      organizationId,
     )
     return res.json(
       dashboards.filter((dashboard) => !dashboard.showInSidebarMenu),

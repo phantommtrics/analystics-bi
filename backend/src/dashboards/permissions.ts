@@ -142,7 +142,6 @@ export function userCanViewDashboard(
   dashboardId: string,
   userType?: UserType,
 ): boolean {
-  if (!hasDashboardParentView(permissions)) return false
   if (userType === UserType.OWNER || permissions.includes('*')) return true
   return hasExplicitCustomDashboardView(permissions, dashboardId)
 }

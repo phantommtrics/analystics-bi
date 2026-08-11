@@ -7,7 +7,6 @@ import {
 } from './config.js'
 import {
   hasExplicitCustomStatementView,
-  hasStatementParentView,
   removeStatementPermissions,
   syncStatementPermissions,
 } from './permissions.js'
@@ -129,10 +128,6 @@ export async function listAccessibleStatements(
   type?: StatementType,
   userType?: UserType,
 ): Promise<StatementListItem[]> {
-  if (!hasStatementParentView(permissions)) {
-    return []
-  }
-
   const where: Prisma.StatementWhereInput = { deletedAt: null, isPublished: true }
   if (search?.trim()) {
     const q = search.trim()

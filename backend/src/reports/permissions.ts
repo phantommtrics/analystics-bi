@@ -128,8 +128,8 @@ export function userCanViewReport(
   reportId: string,
   userType?: UserType,
 ): boolean {
-  if (!hasReportsParentView(permissions)) return false
   if (userType === UserType.OWNER || permissions.includes('*')) return true
+  // Explicit per-report grant is enough (cross-org). Org membership is not an ACL.
   return hasExplicitCustomReportView(permissions, reportId)
 }
 

@@ -102,7 +102,6 @@ export function userCanViewStatement(
   statementId: string,
   userType?: UserType,
 ): boolean {
-  if (!hasStatementParentView(permissions)) return false
   if (userType === UserType.OWNER || permissions.includes('*')) return true
   return hasExplicitCustomStatementView(permissions, statementId)
 }

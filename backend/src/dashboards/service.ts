@@ -1,7 +1,6 @@
 import { Prisma, ReportCategory, UserType } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import {
-  hasDashboardParentView,
   hasExplicitCustomDashboardView,
   removeDashboardPermissions,
   syncDashboardPermissions,
@@ -134,14 +133,8 @@ export async function listAccessibleDashboards(
   permissions: string[],
   search?: string,
   userType?: UserType,
-  organizationId?: string,
 ): Promise<DashboardListItem[]> {
-  if (!hasDashboardParentView(permissions)) {
-    return []
-  }
-
   const where: Prisma.DashboardWhereInput = { deletedAt: null, isPublished: true }
-  if (organizationId) where.organizationId = organizationId
   if (search?.trim()) {
     const q = search.trim()
     where.OR = [

@@ -13,7 +13,7 @@ import {
   getSavedReportById,
   listAccessibleReports,
   listAccessibleSidebarReports,
-  listSavedReports,
+  listBuilderReports,
   publishSavedReport,
   restoreSavedReport,
   softDeleteSavedReport,
@@ -107,11 +107,11 @@ reportsRouter.get('/', viewReports, async (req, res) => {
 
   if (accessibleOnly) {
     await ensureAllReportPermissions()
+    // Access is permission-based (cross-org). Do not scope by organizationId.
     if (sidebarMenuOnly) {
       const reports = await listAccessibleSidebarReports(
         permissions,
         req.authUser?.userType,
-        organizationId,
       )
       const filtered = parsedCategory
         ? reports.filter((r) => r.category === parsedCategory)
@@ -120,7 +120,7 @@ reportsRouter.get('/', viewReports, async (req, res) => {
     }
     const reports = await listAccessibleReports(
       permissions,
-      { category: parsedCategory, search, organizationId },
+      { category: parsedCategory, search },
       req.authUser?.userType,
     )
     return res.json(reports)
@@ -130,11 +130,12 @@ reportsRouter.get('/', viewReports, async (req, res) => {
     return res.status(403).json({ message: 'Forbidden' })
   }
 
-  const reports = await listSavedReports({
+  const reports = await listBuilderReports(permissions, req.authUser?.userType, {
     category: parsedCategory,
     search,
     includeDeleted,
-    organizationId,
+    userId: req.authUser?.id,
+    userOrganizationId: req.authUser?.organizationId ?? organizationId ?? null,
   })
   return res.json(reports)
 })

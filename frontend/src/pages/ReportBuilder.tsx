@@ -521,7 +521,7 @@ export function ReportBuilder() {
       const saved = await reportsApi.publish(accessToken, activeReportId)
       updateActiveTab({ isPublished: saved.isPublished })
       setBannerSuccess(
-        `"${saved.name}" is published. In Roles, grant Reports view plus this report's view permission.`,
+        `"${saved.name}" is published. Your role was granted access automatically; adjust in Roles if others need it.`,
       )
       await loadSavedReports()
     } catch (err) {
@@ -763,7 +763,7 @@ export function ReportBuilder() {
       <ConfirmModal
         open={pendingPublish}
         title="Publish report?"
-        message={`Publish "${activeTab.name}"? Per-report view permissions will appear in Roles under Reports. Users need Reports view and this report's view to open it.`}
+        message={`Publish "${activeTab.name}"? Your role gets this report's permissions automatically. Other users still need the grant in Roles.`}
         confirmLabel="Publish"
         loading={publishLoading}
         onConfirm={confirmPublish}

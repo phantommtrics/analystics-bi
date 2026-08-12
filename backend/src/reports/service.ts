@@ -1,6 +1,7 @@
 import { Prisma, ReportCategory, ReportVisualization, UserType } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import {
+  grantReportPermissionsToUserRoles,
   hasExplicitCustomReportView,
   removeReportPermissions,
   syncReportPermissions,
@@ -323,6 +324,17 @@ export async function createSavedReport(input: CreateSavedReportInput): Promise<
     include: reportInclude,
   })
 
+  // System users do not get * — create permission rows and attach them to the
+  // creator's roles so they can open/list the report they just saved.
+  await syncReportPermissions(report.id, {
+    name: report.name,
+    category: report.category,
+    showInSidebarMenu: report.showInSidebarMenu,
+  })
+  if (input.createdById) {
+    await grantReportPermissionsToUserRoles(report.id, input.createdById)
+  }
+
   return formatDetail(report)
 }
 
@@ -416,6 +428,14 @@ export async function publishSavedReport(
     category: report.category,
     showInSidebarMenu: report.showInSidebarMenu,
   })
+
+  const grantUserIds = new Set<string>()
+  if (updatedById) grantUserIds.add(updatedById)
+  if (existing.createdById) grantUserIds.add(existing.createdById)
+  for (const userId of grantUserIds) {
+    await grantReportPermissionsToUserRoles(report.id, userId)
+  }
+
   return formatDetail(report)
 }
 

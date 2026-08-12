@@ -66,6 +66,55 @@ export async function syncReportPermissions(
   }
 }
 
+/**
+ * Grant all custom-report actions for this report to every role the user
+ * inherits (direct + via groups). Owner is skipped (* already covers them).
+ */
+export async function grantReportPermissionsToUserRoles(
+  reportId: string,
+  userId: string,
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      userType: true,
+      roles: { select: { roleId: true } },
+      groups: { select: { group: { select: { roleId: true } } } },
+    },
+  })
+  if (!user || user.userType === UserType.OWNER) {
+    return
+  }
+
+  const roleIds = [
+    ...new Set([
+      ...user.roles.map((r) => r.roleId),
+      ...user.groups.map((g) => g.group.roleId),
+    ]),
+  ]
+  if (roleIds.length === 0) {
+    return
+  }
+
+  const permissions = await prisma.permission.findMany({
+    where: { moduleKey: reportModuleKey(reportId) },
+    select: { id: true },
+  })
+  if (permissions.length === 0) {
+    return
+  }
+
+  await prisma.rolePermission.createMany({
+    data: roleIds.flatMap((roleId) =>
+      permissions.map((permission) => ({
+        roleId,
+        permissionId: permission.id,
+      })),
+    ),
+    skipDuplicates: true,
+  })
+}
+
 export async function removeReportPermissions(reportId: string) {
   const moduleKey = reportModuleKey(reportId)
   await prisma.rolePermission.deleteMany({
@@ -83,11 +132,13 @@ export async function ensureAllReportPermissions() {
     await syncReportPermissions(report.id, report)
   }
 
-  const unpublished = await prisma.savedReport.findMany({
-    where: { deletedAt: null, isPublished: false },
+  // Soft-deleted reports only — unpublished keep rows so creator grants survive
+  // until an explicit unpublish. Unpublish/delete already call removeReportPermissions.
+  const deleted = await prisma.savedReport.findMany({
+    where: { deletedAt: { not: null } },
     select: { id: true },
   })
-  for (const report of unpublished) {
+  for (const report of deleted) {
     await removeReportPermissions(report.id)
   }
 }

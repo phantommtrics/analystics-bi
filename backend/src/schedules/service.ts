@@ -2,8 +2,10 @@ import {
   ReportScheduleRecurrence,
   ReportScheduleStatus,
   UserStatus,
+  UserType,
 } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import { userCanViewReport } from '../reports/permissions.js'
 import {
   computeNextRunAt,
   formatRecurrenceSummary,
@@ -104,7 +106,10 @@ export async function listReportSchedules() {
   return schedules.map(formatSchedule)
 }
 
-export async function listSchedulableReports() {
+export async function listSchedulableReports(
+  permissions: string[],
+  userType?: UserType,
+) {
   const reports = await prisma.savedReport.findMany({
     where: {
       deletedAt: null,
@@ -118,7 +123,8 @@ export async function listSchedulableReports() {
     },
     orderBy: { name: 'asc' },
   })
-  return reports.map((r) => ({
+  const visible = reports.filter((r) => userCanViewReport(permissions, r.id, userType))
+  return visible.map((r) => ({
     id: r.id,
     name: r.name,
     category: r.category,
@@ -153,7 +159,12 @@ export async function getReportScheduleById(id: string) {
   return formatSchedule(schedule)
 }
 
-async function assertReportAndGroup(reportId: string, groupId: string) {
+async function assertReportAndGroup(
+  reportId: string,
+  groupId: string,
+  permissions: string[],
+  userType?: UserType,
+) {
   const report = await prisma.savedReport.findFirst({
     where: {
       id: reportId,
@@ -163,6 +174,9 @@ async function assertReportAndGroup(reportId: string, groupId: string) {
   })
   if (!report) {
     throw new Error('REPORT_NOT_FOUND')
+  }
+  if (!userCanViewReport(permissions, report.id, userType)) {
+    throw new Error('REPORT_FORBIDDEN')
   }
 
   const group = await prisma.userGroup.findUnique({
@@ -187,8 +201,10 @@ export async function createReportSchedule(data: {
   dayOfMonth?: number | null
   timezoneOffsetMinutes: number
   createdById?: string
+  permissions: string[]
+  userType?: UserType
 }) {
-  await assertReportAndGroup(data.reportId, data.groupId)
+  await assertReportAndGroup(data.reportId, data.groupId, data.permissions, data.userType)
 
   const input: RecurrenceInput = {
     recurrence: data.recurrence,

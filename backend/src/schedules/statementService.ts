@@ -1,8 +1,10 @@
 import {
   ReportScheduleRecurrence,
   ReportScheduleStatus,
+  UserType,
 } from '@prisma/client'
 import { prisma } from '../prisma.js'
+import { userCanViewStatement } from '../statements/permissions.js'
 import {
   computeNextRunAt,
   formatRecurrenceSummary,
@@ -103,7 +105,10 @@ export async function listStatementSchedules() {
   return schedules.map(formatStatementSchedule)
 }
 
-export async function listSchedulableStatements() {
+export async function listSchedulableStatements(
+  permissions: string[],
+  userType?: UserType,
+) {
   const statements = await prisma.statement.findMany({
     where: {
       deletedAt: null,
@@ -118,7 +123,10 @@ export async function listSchedulableStatements() {
     },
     orderBy: { name: 'asc' },
   })
-  return statements.map((s) => ({
+  const visible = statements.filter((s) =>
+    userCanViewStatement(permissions, s.id, userType),
+  )
+  return visible.map((s) => ({
     id: s.id,
     name: s.name,
     type: s.type,
@@ -136,7 +144,12 @@ export async function getStatementScheduleById(id: string) {
   return formatStatementSchedule(schedule)
 }
 
-async function assertStatementAndGroup(statementId: string, groupId: string) {
+async function assertStatementAndGroup(
+  statementId: string,
+  groupId: string,
+  permissions: string[],
+  userType?: UserType,
+) {
   const statement = await prisma.statement.findFirst({
     where: {
       id: statementId,
@@ -146,6 +159,9 @@ async function assertStatementAndGroup(statementId: string, groupId: string) {
   })
   if (!statement) {
     throw new Error('STATEMENT_NOT_FOUND')
+  }
+  if (!userCanViewStatement(permissions, statement.id, userType)) {
+    throw new Error('STATEMENT_FORBIDDEN')
   }
 
   const group = await prisma.userGroup.findUnique({
@@ -170,8 +186,15 @@ export async function createStatementSchedule(data: {
   dayOfMonth?: number | null
   timezoneOffsetMinutes: number
   createdById?: string
+  permissions: string[]
+  userType?: UserType
 }) {
-  await assertStatementAndGroup(data.statementId, data.groupId)
+  await assertStatementAndGroup(
+    data.statementId,
+    data.groupId,
+    data.permissions,
+    data.userType,
+  )
 
   const input: RecurrenceInput = {
     recurrence: data.recurrence,

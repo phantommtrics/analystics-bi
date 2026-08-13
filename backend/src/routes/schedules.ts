@@ -100,6 +100,12 @@ function mapScheduleError(error: unknown, res: import('express').Response) {
     case 'STATEMENT_NOT_FOUND':
       res.status(400).json({ message: 'Published statement not found' })
       return true
+    case 'REPORT_FORBIDDEN':
+      res.status(403).json({ message: 'You do not have permission to schedule this report' })
+      return true
+    case 'STATEMENT_FORBIDDEN':
+      res.status(403).json({ message: 'You do not have permission to schedule this statement' })
+      return true
     case 'GROUP_NOT_FOUND':
       res.status(400).json({ message: 'Recipient group not found' })
       return true
@@ -138,8 +144,11 @@ schedulesRouter.get('/', authorize('schedules', 'view'), async (_req, res) => {
   return res.json(schedules)
 })
 
-schedulesRouter.get('/reports', authorize('schedules', 'view'), async (_req, res) => {
-  const reports = await listSchedulableReports()
+schedulesRouter.get('/reports', authorize('schedules', 'view'), async (req, res) => {
+  const reports = await listSchedulableReports(
+    req.authUser?.permissions ?? [],
+    req.authUser?.userType,
+  )
   return res.json(reports)
 })
 
@@ -148,8 +157,11 @@ schedulesRouter.get('/statements', authorize('schedules', 'view'), async (_req, 
   return res.json(schedules)
 })
 
-schedulesRouter.get('/statement-options', authorize('schedules', 'view'), async (_req, res) => {
-  const statements = await listSchedulableStatements()
+schedulesRouter.get('/statement-options', authorize('schedules', 'view'), async (req, res) => {
+  const statements = await listSchedulableStatements(
+    req.authUser?.permissions ?? [],
+    req.authUser?.userType,
+  )
   return res.json(statements)
 })
 
@@ -233,6 +245,8 @@ schedulesRouter.post('/', authorize('schedules', 'schedule'), async (req, res) =
       dayOfMonth: parsed.data.dayOfMonth,
       timezoneOffsetMinutes: parsed.data.timezoneOffsetMinutes,
       createdById: req.authUser?.id,
+      permissions: req.authUser?.permissions ?? [],
+      userType: req.authUser?.userType,
     })
     return res.status(201).json(schedule)
   } catch (error) {
@@ -307,6 +321,8 @@ schedulesRouter.post('/statements', authorize('schedules', 'schedule'), async (r
       dayOfMonth: parsed.data.dayOfMonth,
       timezoneOffsetMinutes: parsed.data.timezoneOffsetMinutes,
       createdById: req.authUser?.id,
+      permissions: req.authUser?.permissions ?? [],
+      userType: req.authUser?.userType,
     })
     return res.status(201).json(schedule)
   } catch (error) {

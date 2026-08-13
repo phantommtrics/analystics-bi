@@ -110,6 +110,43 @@ async function assertRoleInScope(
   return role
 }
 
+function permissionKey(p: { moduleKey: string; actionKey: string }) {
+  return `${p.moduleKey}:${p.actionKey}`
+}
+
+/** Null means the actor may grant any permission (Owner / *). */
+function grantableKeys(
+  authUser: { userType: UserType; permissions: string[] } | undefined,
+): Set<string> | null {
+  if (!authUser) return new Set()
+  if (authUser.userType === UserType.OWNER || authUser.permissions.includes('*')) {
+    return null
+  }
+  return new Set(authUser.permissions)
+}
+
+function filterCatalogForActor<T extends {
+  modules: string[]
+  moduleActions: Record<string, string[]>
+  permissions: Array<{ id: string; moduleKey: string; actionKey: string }>
+}>(catalog: T, keys: Set<string> | null): T {
+  if (!keys) return catalog
+
+  const permissions = catalog.permissions.filter((p) => keys.has(permissionKey(p)))
+  const allowedModules = new Set(permissions.map((p) => p.moduleKey))
+  const modules = catalog.modules.filter((m) => allowedModules.has(m))
+  const moduleActions = Object.fromEntries(
+    Object.entries(catalog.moduleActions)
+      .filter(([moduleKey]) => allowedModules.has(moduleKey))
+      .map(([moduleKey, actions]) => [
+        moduleKey,
+        actions.filter((action) => keys.has(`${moduleKey}:${action}`)),
+      ]),
+  )
+
+  return { ...catalog, modules, moduleActions, permissions }
+}
+
 export async function assertRoleForOrganization(roleId: string, organizationId: string) {
   const role = await prisma.role.findUnique({
     where: { id: roleId },
@@ -121,7 +158,7 @@ export async function assertRoleForOrganization(roleId: string, organizationId: 
   return role
 }
 
-rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (_req, res) => {
+rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (req, res) => {
   await Promise.all([
     ensureAllDashboardPermissions(),
     ensureAllReportPermissions(),
@@ -178,12 +215,17 @@ rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async 
     catalogStatementModules,
   )
 
-  return res.json({
-    modules,
-    actions: ACTIONS,
-    moduleActions,
-    permissions,
-  })
+  return res.json(
+    filterCatalogForActor(
+      {
+        modules,
+        actions: ACTIONS,
+        moduleActions,
+        permissions,
+      },
+      grantableKeys(req.authUser),
+    ),
+  )
 })
 
 rolesRouter.get(
@@ -219,10 +261,15 @@ rolesRouter.get('/:id', authorize('system-config-roles', 'view'), async (req, re
   if (!role) {
     return res.status(404).json({ message: 'Role not found' })
   }
+  const keys = grantableKeys(req.authUser)
+  const visiblePermissions = keys
+    ? role.permissions.filter((rp) => keys.has(permissionKey(rp.permission)))
+    : role.permissions
+
   return res.json({
     ...formatRole(role),
-    permissionIds: role.permissions.map((rp) => rp.permissionId),
-    permissions: role.permissions.map((rp) => rp.permission),
+    permissionIds: visiblePermissions.map((rp) => rp.permissionId),
+    permissions: visiblePermissions.map((rp) => rp.permission),
   })
 })
 
@@ -289,17 +336,42 @@ rolesRouter.put('/:id/permissions', authorize('system-config-roles', 'edit'), as
     return res.status(404).json({ message: 'Role not found' })
   }
 
-  const validCount = await prisma.permission.count({
+  const valid = await prisma.permission.findMany({
     where: { id: { in: parsed.data.permissionIds } },
+    select: { id: true, moduleKey: true, actionKey: true },
   })
-  if (validCount !== parsed.data.permissionIds.length) {
+  if (valid.length !== parsed.data.permissionIds.length) {
     return res.status(400).json({ message: 'One or more permission IDs are invalid' })
+  }
+
+  const keys = grantableKeys(req.authUser)
+  if (keys) {
+    const forbidden = valid.filter((p) => !keys.has(permissionKey(p)))
+    if (forbidden.length > 0) {
+      return res.status(403).json({
+        message: 'You can only assign permissions that your own role already has',
+      })
+    }
+  }
+
+  const submittedIds = [...new Set(parsed.data.permissionIds)]
+  let nextIds = submittedIds
+
+  if (keys) {
+    const existing = await prisma.rolePermission.findMany({
+      where: { roleId: scoped.id },
+      include: { permission: { select: { id: true, moduleKey: true, actionKey: true } } },
+    })
+    const preserved = existing
+      .filter((rp) => !keys.has(permissionKey(rp.permission)))
+      .map((rp) => rp.permissionId)
+    nextIds = [...new Set([...preserved, ...submittedIds])]
   }
 
   await prisma.$transaction([
     prisma.rolePermission.deleteMany({ where: { roleId: scoped.id } }),
     prisma.rolePermission.createMany({
-      data: parsed.data.permissionIds.map((permissionId) => ({
+      data: nextIds.map((permissionId) => ({
         roleId: scoped.id,
         permissionId,
       })),

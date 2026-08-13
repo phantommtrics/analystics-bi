@@ -290,6 +290,9 @@ export function Roles() {
                   {selectedRole?.organizationName
                     ? `This role belongs to ${selectedRole.organizationName}. Org operators inherit it through User Groups in the same organization.`
                     : 'Platform Owner role. Only the owner account uses this permission set.'}
+                  {!isOwner
+                    ? ' You only see permissions your own role already has. Other grants on this role are left unchanged when you save.'
+                    : ''}
                 </p>
                 {permissionsDirty && (
                   <p className="mb-3 text-xs text-amber-700">Unsaved changes to this permission set</p>

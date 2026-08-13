@@ -198,6 +198,7 @@ No nginx reload needed for static-only frontend updates.
 | Mixed content errors | Use HTTPS for both frontend and `APP_PUBLIC_URL` |
 | 502 on `/api/` | Node not on 4000 — `pm2 restart prixbi-backend` |
 | CORS errors | Add production URL to `CORS_ORIGIN` in backend `.env` |
+| Login 500 / `column Role.organizationId does not exist` | Code was deployed without the Prisma migration — run `npm run prisma:deploy` then `pm2 restart prixbi-backend` |
 | `npm ci` / `npm run build` exits with `Killed` | Linux OOM — see below |
 
 ### `npm …` gets `Killed` on the live server

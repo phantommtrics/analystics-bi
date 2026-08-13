@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { UserType } from '@prisma/client'
 import { z } from 'zod'
 import {
   AUDIT_PAGE_SIZE,
@@ -20,6 +21,13 @@ const listQuerySchema = z.object({
   tzOffset: z.coerce.number().int().optional(),
 })
 
+function orgScope(req: { authUser?: { userType: UserType; organizationId?: string | null } }) {
+  if (req.authUser?.userType === UserType.OWNER) {
+    return undefined
+  }
+  return req.authUser?.organizationId ?? ''
+}
+
 export const auditLogsRouter = Router()
 
 auditLogsRouter.use(authenticate)
@@ -33,15 +41,22 @@ auditLogsRouter.get('/', async (req, res) => {
 
   const { page, pageSize, dateFrom, dateTo, user, action, tzOffset } = parsed.data
   const result = await listAuditLogs(
-    { dateFrom, dateTo, user, action, tzOffsetMinutes: tzOffset },
+    {
+      dateFrom,
+      dateTo,
+      user,
+      action,
+      tzOffsetMinutes: tzOffset,
+      organizationId: orgScope(req),
+    },
     page,
     pageSize,
   )
   return res.json(result)
 })
 
-auditLogsRouter.get('/actions', async (_req, res) => {
-  const actions = await listDistinctActions()
+auditLogsRouter.get('/actions', async (req, res) => {
+  const actions = await listDistinctActions(orgScope(req))
   return res.json({ actions })
 })
 
@@ -58,6 +73,7 @@ auditLogsRouter.get('/export', authorize('audit', 'export_csv'), async (req, res
     user,
     action,
     tzOffsetMinutes: tzOffset,
+    organizationId: orgScope(req),
   })
   const csv = auditLogsToCsv(rows)
   const stamp = new Date().toISOString().slice(0, 10)

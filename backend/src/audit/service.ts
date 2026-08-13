@@ -17,6 +17,8 @@ export type AuditLogFilters = {
   action?: string
   /** `Date.getTimezoneOffset()` from the client (minutes). */
   tzOffsetMinutes?: number
+  /** When set, only logs from users in this organization. */
+  organizationId?: string | null
 }
 
 function localDayStart(isoDate: string, tzOffsetMinutes: number): Date {
@@ -62,6 +64,12 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
 function buildWhere(filters: AuditLogFilters): Prisma.AuditLogWhereInput {
   const where: Prisma.AuditLogWhereInput = {}
 
+  if (filters.organizationId) {
+    where.user = { organizationId: filters.organizationId }
+  } else if (filters.organizationId === '') {
+    where.id = { in: [] }
+  }
+
   if (filters.dateFrom || filters.dateTo) {
     const tzOffset = filters.tzOffsetMinutes ?? 0
     where.createdAt = {}
@@ -75,16 +83,21 @@ function buildWhere(filters: AuditLogFilters): Prisma.AuditLogWhereInput {
 
   if (filters.user?.trim()) {
     const term = filters.user.trim()
-    where.OR = [
-      { userLabel: { contains: term, mode: 'insensitive' } },
+    where.AND = [
+      ...(Array.isArray(where.AND) ? where.AND : []),
       {
-        user: {
-          OR: [
-            { username: { contains: term, mode: 'insensitive' } },
-            { email: { contains: term, mode: 'insensitive' } },
-            { displayName: { contains: term, mode: 'insensitive' } },
-          ],
-        },
+        OR: [
+          { userLabel: { contains: term, mode: 'insensitive' } },
+          {
+            user: {
+              OR: [
+                { username: { contains: term, mode: 'insensitive' } },
+                { email: { contains: term, mode: 'insensitive' } },
+                { displayName: { contains: term, mode: 'insensitive' } },
+              ],
+            },
+          },
+        ],
       },
     ]
   }
@@ -154,8 +167,15 @@ export async function listAuditLogsForExport(filters: AuditLogFilters) {
   return logs.map(toRow)
 }
 
-export async function listDistinctActions(): Promise<string[]> {
+export async function listDistinctActions(organizationId?: string): Promise<string[]> {
+  const where: Prisma.AuditLogWhereInput =
+    organizationId === undefined
+      ? {}
+      : organizationId
+        ? { user: { organizationId } }
+        : { id: { in: [] } }
   const rows = await prisma.auditLog.findMany({
+    where,
     distinct: ['action'],
     select: { action: true },
     orderBy: { action: 'asc' },

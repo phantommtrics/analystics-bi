@@ -2,19 +2,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { TopBar } from '../../components/layout/TopBar'
 import { Card, CardHeader, CardTitle } from '../../components/ui/Card'
 import { ConfirmModal } from '../../components/ui/ConfirmModal'
-import { DataTable } from '../../components/ui/DataTable'
+import { DataTable, type Column } from '../../components/ui/DataTable'
 import { ExpandableCard } from '../../components/ui/ExpandableCard'
 import { LoadingButton } from '../../components/ui/LoadingButton'
 import { PermissionMatrix } from '../../components/admin/PermissionMatrix'
-import { adminApi, type PermissionsCatalog, type RoleSummary } from '../../api/admin'
+import { adminApi, type OrganizationSummary, type PermissionsCatalog, type RoleSummary } from '../../api/admin'
 import { useAuth } from '../../auth/AuthContext'
 import { setsEqual } from '../../lib/setUtils'
 
 type PendingAction = { type: 'create' } | { type: 'savePermissions' } | null
 
 export function Roles() {
-  const { accessToken, refreshUser } = useAuth()
+  const { accessToken, refreshUser, user } = useAuth()
   const [roles, setRoles] = useState<RoleSummary[]>([])
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
   const [catalog, setCatalog] = useState<PermissionsCatalog | null>(null)
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -27,6 +28,11 @@ export function Roles() {
   const [pending, setPending] = useState<PendingAction>(null)
   const [formName, setFormName] = useState('')
   const [formDescription, setFormDescription] = useState('')
+  const [formOrganizationId, setFormOrganizationId] = useState('')
+
+  const isOwner = user?.userType === 'OWNER'
+  const defaultOrgId =
+    organizations.find((o) => o.isDefault)?.id ?? organizations[0]?.id ?? ''
 
   const permissionsDirty = useMemo(() => {
     if (!selectedRoleId) return false
@@ -35,9 +41,21 @@ export function Roles() {
 
   const loadRoles = useCallback(async () => {
     if (!accessToken) return
-    const list = await adminApi.listRoles(accessToken)
+    const [list, orgList] = await Promise.all([
+      adminApi.listRoles(accessToken),
+      isOwner ? adminApi.listOrganizations(accessToken) : Promise.resolve([]),
+    ])
     setRoles(list)
-  }, [accessToken])
+    setOrganizations(orgList)
+    if (!formOrganizationId) {
+      const orgId =
+        orgList.find((o) => o.isDefault)?.id ??
+        orgList[0]?.id ??
+        user?.organization?.id ??
+        ''
+      if (orgId) setFormOrganizationId(orgId)
+    }
+  }, [accessToken, formOrganizationId, isOwner, user?.organization?.id])
 
   const loadCatalog = useCallback(async () => {
     if (!accessToken) return
@@ -83,6 +101,7 @@ export function Roles() {
       const created = await adminApi.createRole(accessToken, {
         name: formName.trim(),
         description: formDescription.trim() || undefined,
+        organizationId: formOrganizationId || defaultOrgId || undefined,
       })
       await loadRoles()
       setShowForm(false)
@@ -117,6 +136,47 @@ export function Roles() {
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId)
 
+  const roleColumns = useMemo((): Column<RoleSummary>[] => {
+    const columns: Column<RoleSummary>[] = [
+      {
+        header: 'Role',
+        accessor: (r) => (
+          <button
+            className={`text-left font-medium ${selectedRoleId === r.id ? 'text-brand-blue' : ''}`}
+            onClick={() => setSelectedRoleId(r.id)}
+          >
+            {r.name}
+          </button>
+        ),
+      },
+    ]
+    if (isOwner) {
+      columns.push({
+        header: 'Organization',
+        accessor: (r) => r.organizationName ?? 'Platform',
+        className: 'text-sm text-text-secondary',
+      })
+    }
+    columns.push(
+      {
+        header: 'Users',
+        accessor: (r) => r.userCount,
+        className: 'text-sm text-text-secondary',
+      },
+      {
+        header: 'Groups',
+        accessor: (r) => r.groupCount ?? 0,
+        className: 'text-sm text-text-secondary',
+      },
+      {
+        header: 'Permissions',
+        accessor: (r) => r.permissionCount,
+        className: 'text-sm text-text-secondary',
+      },
+    )
+    return columns
+  }, [isOwner, selectedRoleId])
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -146,6 +206,23 @@ export function Roles() {
               <CardTitle>Create role</CardTitle>
             </CardHeader>
             <div className="space-y-3">
+              {isOwner && organizations.length > 0 && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                  <select
+                    className="w-full rounded-md border border-border bg-bg-primary px-3 py-2 text-sm"
+                    value={formOrganizationId || defaultOrgId}
+                    onChange={(e) => setFormOrganizationId(e.target.value)}
+                  >
+                    {organizations.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.name}
+                        {org.isDefault ? ' (default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <input
                 placeholder="Role name"
                 value={formName}
@@ -187,34 +264,7 @@ export function Roles() {
               <DataTable
                 data={roles}
                 keyExtractor={(r) => r.id}
-                columns={[
-                  {
-                    header: 'Role',
-                    accessor: (r) => (
-                      <button
-                        className={`text-left font-medium ${selectedRoleId === r.id ? 'text-brand-blue' : ''}`}
-                        onClick={() => setSelectedRoleId(r.id)}
-                      >
-                        {r.name}
-                      </button>
-                    ),
-                  },
-                  {
-                    header: 'Users',
-                    accessor: (r) => r.userCount,
-                    className: 'text-sm text-text-secondary',
-                  },
-                  {
-                    header: 'Groups',
-                    accessor: (r) => r.groupCount ?? 0,
-                    className: 'text-sm text-text-secondary',
-                  },
-                  {
-                    header: 'Permissions',
-                    accessor: (r) => r.permissionCount,
-                    className: 'text-sm text-text-secondary',
-                  },
-                ]}
+                columns={roleColumns}
               />
             )}
           </ExpandableCard>
@@ -237,8 +287,9 @@ export function Roles() {
             {selectedRoleId && catalog ? (
               <>
                 <p className="mb-3 text-xs text-text-secondary">
-                  Org operators get this role through User Groups, not a direct role assignment.
-                  Confirm the operator&apos;s group is linked to this role.
+                  {selectedRole?.organizationName
+                    ? `This role belongs to ${selectedRole.organizationName}. Org operators inherit it through User Groups in the same organization.`
+                    : 'Platform Owner role. Only the owner account uses this permission set.'}
                 </p>
                 {permissionsDirty && (
                   <p className="mb-3 text-xs text-amber-700">Unsaved changes to this permission set</p>

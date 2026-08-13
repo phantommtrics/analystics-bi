@@ -76,22 +76,21 @@ export async function organizationListWhere(
   req: Request,
 ): Promise<{ organizationId?: string }> {
   const authUser = req.authUser
-  if (!authUser) return {}
-
-  const explicit = explicitOrganizationIdFromRequest(req)
-  if (explicit) {
-    const valid = await validateOrganizationId(explicit)
-    return valid ? { organizationId: valid } : {}
-  }
+  if (!authUser) return { organizationId: '' }
 
   if (authUser.userType === UserType.OWNER) {
+    const explicit = explicitOrganizationIdFromRequest(req)
+    if (explicit) {
+      const valid = await validateOrganizationId(explicit)
+      return valid ? { organizationId: valid } : { organizationId: '' }
+    }
     return {}
   }
 
   if (authUser.organizationId) {
     return { organizationId: authUser.organizationId }
   }
-  return {}
+  return { organizationId: '' }
 }
 
 /** Filter for tenant-scoped creates/lists that should always target one org. */

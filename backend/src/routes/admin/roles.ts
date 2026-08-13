@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { UserType } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
@@ -23,6 +24,7 @@ import {
   listCatalogStatementModuleKeys,
 } from '../../statements/permissions.js'
 import { paramId } from '../../utils/params.js'
+import { organizationListWhere, resolveOrganizationId } from '../../organization/scope.js'
 
 export const rolesRouter = Router()
 
@@ -31,6 +33,7 @@ rolesRouter.use(authenticate)
 const createRoleSchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
+  organizationId: z.string().min(1).optional(),
 })
 
 const updateRoleSchema = z.object({
@@ -41,6 +44,82 @@ const updateRoleSchema = z.object({
 const setPermissionsSchema = z.object({
   permissionIds: z.array(z.string()),
 })
+
+const roleListInclude = {
+  organization: { select: { id: true, name: true } },
+  _count: { select: { permissions: true, groups: true } },
+  users: { select: { userId: true } },
+  groups: {
+    select: {
+      members: { select: { userId: true } },
+    },
+  },
+} as const
+
+function formatRole(r: {
+  id: string
+  name: string
+  description: string | null
+  organizationId: string | null
+  organization: { id: string; name: string } | null
+  createdAt: Date
+  updatedAt: Date
+  _count: { permissions: number; groups: number }
+  users: Array<{ userId: string }>
+  groups: Array<{ members: Array<{ userId: string }> }>
+}) {
+  const userIds = new Set([
+    ...r.users.map((u) => u.userId),
+    ...r.groups.flatMap((g) => g.members.map((m) => m.userId)),
+  ])
+  return {
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    organizationId: r.organizationId,
+    organizationName: r.organization?.name ?? null,
+    userCount: userIds.size,
+    groupCount: r._count.groups,
+    permissionCount: r._count.permissions,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  }
+}
+
+async function assertRoleInScope(
+  req: Parameters<typeof resolveOrganizationId>[0],
+  roleId: string,
+) {
+  const role = await prisma.role.findUnique({
+    where: { id: roleId },
+    select: { id: true, name: true, organizationId: true },
+  })
+  if (!role) return null
+
+  if (req.authUser?.userType === UserType.OWNER) {
+    const listFilter = await organizationListWhere(req)
+    if (listFilter.organizationId && role.organizationId !== listFilter.organizationId) {
+      return null
+    }
+    return role
+  }
+
+  if (!role.organizationId || role.organizationId !== req.authUser?.organizationId) {
+    return null
+  }
+  return role
+}
+
+export async function assertRoleForOrganization(roleId: string, organizationId: string) {
+  const role = await prisma.role.findUnique({
+    where: { id: roleId },
+    select: { id: true, organizationId: true, name: true },
+  })
+  if (!role || !role.organizationId || role.organizationId !== organizationId) {
+    return null
+  }
+  return role
+}
 
 rolesRouter.get('/permissions', authorize('system-config-roles', 'view'), async (_req, res) => {
   await Promise.all([
@@ -113,67 +192,35 @@ rolesRouter.get(
     ['system-config-roles', 'view'],
     ['system-config-groups', 'edit'],
   ]),
-  async (_req, res) => {
-  const roles = await prisma.role.findMany({
-    include: {
-      _count: { select: { permissions: true, groups: true } },
-      users: { select: { userId: true } },
-      groups: {
-        select: {
-          members: { select: { userId: true } },
-        },
-      },
-    },
-    orderBy: { name: 'asc' },
-  })
-  return res.json(
-    roles.map((r) => {
-      const userIds = new Set([
-        ...r.users.map((u) => u.userId),
-        ...r.groups.flatMap((g) => g.members.map((m) => m.userId)),
-      ])
-      return {
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        userCount: userIds.size,
-        groupCount: r._count.groups,
-        permissionCount: r._count.permissions,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-      }
-    }),
-  )
-},
+  async (req, res) => {
+    const orgFilter = await organizationListWhere(req)
+    const roles = await prisma.role.findMany({
+      where: orgFilter,
+      include: roleListInclude,
+      orderBy: [{ name: 'asc' }],
+    })
+    return res.json(roles.map(formatRole))
+  },
 )
 
 rolesRouter.get('/:id', authorize('system-config-roles', 'view'), async (req, res) => {
+  const scoped = await assertRoleInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Role not found' })
+  }
+
   const role = await prisma.role.findUnique({
-    where: { id: paramId(req) },
+    where: { id: scoped.id },
     include: {
+      ...roleListInclude,
       permissions: { include: { permission: true } },
-      _count: { select: { groups: true } },
-      users: { select: { userId: true } },
-      groups: {
-        select: {
-          members: { select: { userId: true } },
-        },
-      },
     },
   })
   if (!role) {
     return res.status(404).json({ message: 'Role not found' })
   }
-  const userIds = new Set([
-    ...role.users.map((u) => u.userId),
-    ...role.groups.flatMap((g) => g.members.map((m) => m.userId)),
-  ])
   return res.json({
-    id: role.id,
-    name: role.name,
-    description: role.description,
-    userCount: userIds.size,
-    groupCount: role._count.groups,
+    ...formatRole(role),
     permissionIds: role.permissions.map((rp) => rp.permissionId),
     permissions: role.permissions.map((rp) => rp.permission),
   })
@@ -184,11 +231,24 @@ rolesRouter.post('/', authorize('system-config-roles', 'edit'), async (req, res)
   if (!parsed.success) {
     return res.status(400).json({ message: 'Invalid payload' })
   }
+
+  const organizationId = await resolveOrganizationId(req, parsed.data.organizationId)
+  if (!organizationId) {
+    return res.status(400).json({ message: 'Organization context required' })
+  }
+
   try {
-    const role = await prisma.role.create({ data: parsed.data })
-    return res.status(201).json(role)
+    const role = await prisma.role.create({
+      data: {
+        name: parsed.data.name,
+        description: parsed.data.description,
+        organizationId,
+      },
+      include: roleListInclude,
+    })
+    return res.status(201).json(formatRole(role))
   } catch {
-    return res.status(409).json({ message: 'Role name already exists' })
+    return res.status(409).json({ message: 'Role name already exists in this organization' })
   }
 })
 
@@ -197,14 +257,24 @@ rolesRouter.patch('/:id', authorize('system-config-roles', 'edit'), async (req, 
   if (!parsed.success) {
     return res.status(400).json({ message: 'Invalid payload' })
   }
+
+  const scoped = await assertRoleInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Role not found' })
+  }
+  if (!scoped.organizationId) {
+    return res.status(400).json({ message: 'Cannot rename the platform Owner role' })
+  }
+
   try {
     const role = await prisma.role.update({
-      where: { id: paramId(req) },
+      where: { id: scoped.id },
       data: parsed.data,
+      include: roleListInclude,
     })
-    return res.json(role)
+    return res.json(formatRole(role))
   } catch {
-    return res.status(404).json({ message: 'Role not found' })
+    return res.status(409).json({ message: 'Role name already exists in this organization' })
   }
 })
 
@@ -214,8 +284,8 @@ rolesRouter.put('/:id/permissions', authorize('system-config-roles', 'edit'), as
     return res.status(400).json({ message: 'Invalid payload' })
   }
 
-  const role = await prisma.role.findUnique({ where: { id: paramId(req) } })
-  if (!role) {
+  const scoped = await assertRoleInScope(req, paramId(req))
+  if (!scoped) {
     return res.status(404).json({ message: 'Role not found' })
   }
 
@@ -227,17 +297,17 @@ rolesRouter.put('/:id/permissions', authorize('system-config-roles', 'edit'), as
   }
 
   await prisma.$transaction([
-    prisma.rolePermission.deleteMany({ where: { roleId: role.id } }),
+    prisma.rolePermission.deleteMany({ where: { roleId: scoped.id } }),
     prisma.rolePermission.createMany({
       data: parsed.data.permissionIds.map((permissionId) => ({
-        roleId: role.id,
+        roleId: scoped.id,
         permissionId,
       })),
     }),
   ])
 
   const updated = await prisma.role.findUnique({
-    where: { id: role.id },
+    where: { id: scoped.id },
     include: { permissions: { include: { permission: true } } },
   })
   return res.json({
@@ -247,15 +317,20 @@ rolesRouter.put('/:id/permissions', authorize('system-config-roles', 'edit'), as
 })
 
 rolesRouter.delete('/:id', authorize('system-config-roles', 'delete'), async (req, res) => {
+  const scoped = await assertRoleInScope(req, paramId(req))
+  if (!scoped) {
+    return res.status(404).json({ message: 'Role not found' })
+  }
+  if (!scoped.organizationId || scoped.name === 'Owner') {
+    return res.status(400).json({ message: 'Cannot delete the Owner role' })
+  }
+
   const role = await prisma.role.findUnique({
-    where: { id: paramId(req) },
+    where: { id: scoped.id },
     include: { _count: { select: { users: true, groups: true } } },
   })
   if (!role) {
     return res.status(404).json({ message: 'Role not found' })
-  }
-  if (role.name === 'Owner') {
-    return res.status(400).json({ message: 'Cannot delete the Owner role' })
   }
   if (role._count.users > 0 || role._count.groups > 0) {
     return res.status(400).json({ message: 'Role is in use and cannot be deleted' })

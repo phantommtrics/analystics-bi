@@ -114,6 +114,7 @@ model Organization {
   users                   User[]
   dataSources             DataSource[]
   userGroups              UserGroup[]
+  roles                   Role[]
   savedReports            SavedReport[]
   dashboards              Dashboard[]
   statements              Statement[]
@@ -172,14 +173,20 @@ model AuditLog {
 }
 
 model Role {
-  id          String           @id @default(cuid())
-  name        String           @unique
-  description String?
-  users       UserRole[]
-  groups      UserGroup[]
-  permissions RolePermission[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id             String           @id @default(cuid())
+  name           String
+  description    String?
+  /// Null = platform Owner role. Org roles are visible only within that org.
+  organizationId String?
+  organization   Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users          UserRole[]
+  groups         UserGroup[]
+  permissions    RolePermission[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
 }
 
 model Permission {

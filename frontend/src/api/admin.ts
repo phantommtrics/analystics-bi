@@ -41,6 +41,8 @@ export interface RoleSummary {
   id: string
   name: string
   description: string | null
+  organizationId: string | null
+  organizationName: string | null
   userCount: number
   groupCount?: number
   permissionCount: number
@@ -92,12 +94,19 @@ export const adminApi = {
   getPermissionsCatalog: (token: string) =>
     adminFetch<PermissionsCatalog>('/roles/permissions', token),
 
-  listRoles: (token: string) => adminFetch<RoleSummary[]>('/roles', token),
+  listRoles: (token: string, organizationId?: string) =>
+    adminFetch<RoleSummary[]>(
+      organizationId ? `/roles?organizationId=${encodeURIComponent(organizationId)}` : '/roles',
+      token,
+    ),
 
   getRole: (token: string, id: string) =>
     adminFetch<RoleDetail>(`/roles/${id}`, token),
 
-  createRole: (token: string, data: { name: string; description?: string }) =>
+  createRole: (
+    token: string,
+    data: { name: string; description?: string; organizationId?: string },
+  ) =>
     adminFetch<{ id: string }>('/roles', token, {
       method: 'POST',
       body: JSON.stringify(data),

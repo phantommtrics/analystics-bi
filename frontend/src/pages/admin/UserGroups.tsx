@@ -74,14 +74,32 @@ export function UserGroups() {
     editMemberIds,
   ])
 
-  const roleOptions = useMemo(
+  const createOrgId = formOrganizationId || defaultOrgId || user?.organization?.id || ''
+  const editOrgId =
+    groups.find((g) => g.id === selectedGroupId)?.organizationId ?? ''
+
+  const createRoleOptions = useMemo(
     () =>
-      roles.map((r) => ({
-        id: r.id,
-        label: r.name,
-        description: r.description ?? undefined,
-      })),
-    [roles],
+      roles
+        .filter((r) => r.organizationId && r.organizationId === createOrgId)
+        .map((r) => ({
+          id: r.id,
+          label: r.name,
+          description: r.description ?? undefined,
+        })),
+    [roles, createOrgId],
+  )
+
+  const editRoleOptions = useMemo(
+    () =>
+      roles
+        .filter((r) => r.organizationId && r.organizationId === editOrgId)
+        .map((r) => ({
+          id: r.id,
+          label: r.name,
+          description: r.description ?? undefined,
+        })),
+    [roles, editOrgId],
   )
 
   const memberOptions = useMemo(() => {
@@ -264,7 +282,10 @@ export function UserGroups() {
                   <select
                     className="w-full rounded-md border border-border bg-bg-primary px-3 py-2 text-sm"
                     value={formOrganizationId || defaultOrgId}
-                    onChange={(e) => setFormOrganizationId(e.target.value)}
+                    onChange={(e) => {
+                      setFormOrganizationId(e.target.value)
+                      setFormRoleId(null)
+                    }}
                   >
                     {organizations.map((org) => (
                       <option key={org.id} value={org.id}>
@@ -287,13 +308,13 @@ export function UserGroups() {
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Role set</label>
                 <SearchableSelect
-                  options={roleOptions}
+                  options={createRoleOptions}
                   value={formRoleId}
                   onChange={setFormRoleId}
                   placeholder="Select role set..."
                   searchPlaceholder="Search roles..."
-                  emptyMessage="No roles available. Create a role first."
-                  disabled={roles.length === 0}
+                  emptyMessage="No roles in this organization. Create a role first."
+                  disabled={createRoleOptions.length === 0}
                 />
               </div>
               <div className="md:col-span-2">
@@ -434,11 +455,12 @@ export function UserGroups() {
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">Assigned role set</label>
                   <SearchableSelect
-                    options={roleOptions}
+                    options={editRoleOptions}
                     value={selectedRoleId}
                     onChange={setSelectedRoleId}
                     placeholder="Select role set..."
                     searchPlaceholder="Search roles..."
+                    emptyMessage="No roles in this organization."
                   />
                 </div>
                 <div>

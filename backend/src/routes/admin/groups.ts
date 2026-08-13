@@ -6,6 +6,7 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize, authorizeAny } from '../../middleware/authorize.js'
 import { paramId } from '../../utils/params.js'
 import { organizationListWhere, resolveOrganizationId } from '../../organization/scope.js'
+import { assertRoleForOrganization } from './roles.js'
 
 export const groupsRouter = Router()
 
@@ -165,9 +166,9 @@ groupsRouter.post('/', authorize('system-config-groups', 'edit'), async (req, re
     return res.status(400).json({ message: 'Organization context required' })
   }
 
-  const role = await prisma.role.findUnique({ where: { id: parsed.data.roleId } })
+  const role = await assertRoleForOrganization(parsed.data.roleId, organizationId)
   if (!role) {
-    return res.status(400).json({ message: 'Invalid role ID' })
+    return res.status(400).json({ message: 'Role must belong to the same organization as the group' })
   }
 
   try {
@@ -198,9 +199,11 @@ groupsRouter.patch('/:id', authorize('system-config-groups', 'edit'), async (req
   }
 
   if (parsed.data.roleId) {
-    const role = await prisma.role.findUnique({ where: { id: parsed.data.roleId } })
+    const role = await assertRoleForOrganization(parsed.data.roleId, scoped.organizationId)
     if (!role) {
-      return res.status(400).json({ message: 'Invalid role ID' })
+      return res.status(400).json({
+        message: 'Role must belong to the same organization as the group',
+      })
     }
   }
 

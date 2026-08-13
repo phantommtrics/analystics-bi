@@ -92,11 +92,13 @@ async function main() {
     }
   }
 
-  const ownerRole = await prisma.role.upsert({
-    where: { name: 'Owner' },
-    update: {},
-    create: { name: 'Owner', description: 'Full system access' },
-  })
+  const ownerRole =
+    (await prisma.role.findFirst({
+      where: { name: 'Owner', organizationId: null },
+    })) ??
+    (await prisma.role.create({
+      data: { name: 'Owner', description: 'Full system access' },
+    }))
 
   const allPermissions = await prisma.permission.findMany({ select: { id: true } })
   for (const permission of allPermissions) {

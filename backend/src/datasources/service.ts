@@ -182,6 +182,7 @@ export async function testDataSourceConnection(id: string): Promise<TestConnecti
 export async function executeDataSourceQuery(
   dataSourceId: string,
   sql: string,
+  maxRows?: number,
 ): Promise<ExecuteQueryResult> {
   const record = await prisma.dataSource.findUnique({ where: { id: dataSourceId } })
   if (!record) {
@@ -195,10 +196,10 @@ export async function executeDataSourceQuery(
     'query',
     `Executing datasource="${record.name}" db=${record.database} sql=${truncateSql(sql)}`,
   )
-  const result = await executeReadOnlyQuery(record.id, config, sql)
+  const result = await executeReadOnlyQuery(record.id, config, sql, maxRows)
   log(
     'query',
-    `Completed datasource="${record.name}" rows=${result.rowCount} latency=${result.latencyMs}ms${result.truncated ? ' (truncated)' : ''}`,
+    `Completed datasource="${record.name}" rows=${result.rowCount} matched=${result.matchedRowCount} latency=${result.latencyMs}ms${result.truncated ? ' (truncated)' : ''}`,
   )
   return result
 }

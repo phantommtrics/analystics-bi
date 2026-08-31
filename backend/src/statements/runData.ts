@@ -1,6 +1,6 @@
 import { StatementType } from '@prisma/client'
 import { executeDataSourceQuery } from '../datasources/service.js'
-import type { ExecuteQueryResult } from '../datasources/postgres.js'
+import { REPORT_MAX_ROWS, type ExecuteQueryResult } from '../datasources/postgres.js'
 import { applySqlFilters } from '../reports/sqlFilters.js'
 import { getSavedReportById } from '../reports/service.js'
 import { parseStatementConfig } from './config.js'
@@ -27,7 +27,7 @@ async function executeReport(
     throw new Error('Data source is inactive')
   }
   const sql = applySqlFilters(report.sql, filters)
-  return executeDataSourceQuery(report.dataSourceId, sql)
+  return executeDataSourceQuery(report.dataSourceId, sql, REPORT_MAX_ROWS)
 }
 
 export async function runStatementData(

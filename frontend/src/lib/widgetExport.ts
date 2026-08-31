@@ -127,7 +127,7 @@ export async function exportQueryResultToPdf(
     summaryLines.push(`Date range: ${meta.filterLabel}.`)
   }
   summaryLines.push(
-    `Generated on ${new Date().toLocaleString()} · ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}${result.truncated ? ' (truncated at 500)' : ''}.`,
+    `Generated on ${new Date().toLocaleString()} · ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}${result.truncated ? ` (truncated at ${result.maxRows ?? 500})` : ''}.`,
   )
 
   for (const line of summaryLines) {

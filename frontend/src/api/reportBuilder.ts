@@ -4,8 +4,10 @@ export interface QueryExecuteResult {
   columns: string[]
   rows: Record<string, unknown>[]
   rowCount: number
+  matchedRowCount?: number
   latencyMs: number
   truncated: boolean
+  maxRows?: number
 }
 
 export interface SchemaTable {

@@ -111,7 +111,13 @@ export async function fetchKpiPairOptions(
 
   return {
     options: extractKpiPairOptions(
-      columnsResult ?? { columns: [], rows: [], rowCount: 0, latencyMs: 0, truncated: false },
+      columnsResult ?? {
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        latencyMs: 0,
+        truncated: false,
+      },
     ),
     usedPreviewFilters: false,
   }

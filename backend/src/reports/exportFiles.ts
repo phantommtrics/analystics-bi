@@ -70,7 +70,7 @@ export async function queryResultToPdf(
   }
   const generatedAt = meta.generatedAt ?? new Date()
   summaryLines.push(
-    `Generated on ${generatedAt.toLocaleString('en-GB')} · ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}${result.truncated ? ' (truncated at 500)' : ''}.`,
+    `Generated on ${generatedAt.toLocaleString('en-GB')} · ${result.rowCount} row${result.rowCount === 1 ? '' : 's'}${result.truncated ? ` (truncated at ${result.maxRows})` : ''}.`,
   )
 
   for (const line of summaryLines) {

@@ -5,6 +5,7 @@ import {
   getDataSourceTableColumns,
   listDataSourceTables,
 } from '../datasources/service.js'
+import { REPORT_MAX_ROWS } from '../datasources/postgres.js'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize } from '../middleware/authorize.js'
 import { applySqlFilters } from '../reports/sqlFilters.js'
@@ -90,7 +91,7 @@ reportBuilderRouter.post('/execute', authorize('report-builder', 'view'), async 
 
   try {
     const sql = applySqlFilters(parsed.data.sql, parsed.data.filters ?? {})
-    const result = await executeDataSourceQuery(parsed.data.dataSourceId, sql)
+    const result = await executeDataSourceQuery(parsed.data.dataSourceId, sql, REPORT_MAX_ROWS)
     return res.json(result)
   } catch (error) {
     return handleDataSourceError(error, res)

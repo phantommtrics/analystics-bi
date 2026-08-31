@@ -46,7 +46,14 @@ export function formatQueryStatus(
   options?: { loading?: boolean },
 ): string {
   if (options?.loading) return 'Loading…'
-  return `${queryResult.rowCount} row${queryResult.rowCount === 1 ? '' : 's'} · ${queryResult.latencyMs}ms${queryResult.truncated ? ' · truncated at 500' : ''}`
+  const truncation = queryResult.truncated
+    ? ` · truncated at ${queryResult.maxRows ?? 500}`
+    : ''
+  const matched =
+    queryResult.truncated && queryResult.matchedRowCount
+      ? ` of ${queryResult.matchedRowCount}`
+      : ''
+  return `${queryResult.rowCount}${matched} row${queryResult.rowCount === 1 ? '' : 's'} · ${queryResult.latencyMs}ms${truncation}`
 }
 
 export function placeholderColumnHeaders(count = 5): string[] {

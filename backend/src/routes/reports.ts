@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authenticate } from '../middleware/authenticate.js'
 import { authorize, authorizeAny } from '../middleware/authorize.js'
 import { executeDataSourceQuery } from '../datasources/service.js'
+import { DEFAULT_MAX_ROWS, REPORT_MAX_ROWS } from '../datasources/postgres.js'
 import { dashboardContainsReport } from '../dashboards/service.js'
 import { userCanViewDashboard } from '../dashboards/permissions.js'
 import { statementContainsReport } from '../statements/service.js'
@@ -214,7 +215,8 @@ reportsRouter.post('/:id/execute', async (req, res) => {
 
   try {
     const sql = applySqlFilters(report.sql, parsed.data.filters ?? {})
-    const result = await executeDataSourceQuery(report.dataSourceId, sql)
+    const maxRows = parsed.data.dashboardId ? DEFAULT_MAX_ROWS : REPORT_MAX_ROWS
+    const result = await executeDataSourceQuery(report.dataSourceId, sql, maxRows)
     return res.json(result)
   } catch (error) {
     if (error instanceof Error) {

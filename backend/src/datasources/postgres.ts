@@ -128,7 +128,9 @@ function sanitizeErrorMessage(message: string): string {
   return message.replace(/password[^\s]*/gi, 'password=[redacted]')
 }
 
-const DEFAULT_MAX_ROWS = 500
+export const DEFAULT_MAX_ROWS = 500
+/** Full table / CSV / scheduled runs. Preview widgets keep DEFAULT_MAX_ROWS. */
+export const REPORT_MAX_ROWS = 50_000
 const QUERY_TIMEOUT_MS = 30_000
 
 export type QueryRow = Record<string, unknown>
@@ -137,8 +139,10 @@ export type ExecuteQueryResult = {
   columns: string[]
   rows: QueryRow[]
   rowCount: number
+  matchedRowCount: number
   latencyMs: number
   truncated: boolean
+  maxRows: number
 }
 
 function assertSingleStatement(sql: string) {
@@ -358,8 +362,10 @@ export async function executeReadOnlyQuery(
       columns,
       rows,
       rowCount: rows.length,
+      matchedRowCount: allRows.length,
       latencyMs: Date.now() - started,
       truncated,
+      maxRows,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Query failed'

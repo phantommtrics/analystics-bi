@@ -1,5 +1,5 @@
 import { executeDataSourceQuery } from '../datasources/service.js'
-import type { ExecuteQueryResult } from '../datasources/postgres.js'
+import { REPORT_MAX_ROWS, type ExecuteQueryResult } from '../datasources/postgres.js'
 import {
   buildReportExportAttachments,
   type ReportFileAttachment,
@@ -35,7 +35,7 @@ export async function runScheduledReport(
   const filters = buildScheduleExecuteFilters(report.sql, ctx)
   const sql = applySqlFilters(report.sql, filters)
   log('report-schedule', `Running scheduled report="${report.name}" id=${reportId}`)
-  const result = await executeDataSourceQuery(report.dataSourceId, sql)
+  const result = await executeDataSourceQuery(report.dataSourceId, sql, REPORT_MAX_ROWS)
 
   const range = scheduleDateRange(ctx)
   const filterLabel = formatScheduleFilterLabel(range)

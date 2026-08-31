@@ -74,6 +74,17 @@ function formatCustomColumnValue(row: Record<string, unknown>, sourceColumn: str
   return cellString(row, sourceColumn)
 }
 
+function withQueryMeta(
+  data: ExecuteQueryResult,
+  result: Pick<ExecuteQueryResult, 'columns' | 'rows' | 'rowCount' | 'latencyMs' | 'truncated'>,
+): ExecuteQueryResult {
+  return {
+    ...result,
+    matchedRowCount: data.matchedRowCount,
+    maxRows: data.maxRows,
+  }
+}
+
 export function statementToExportResult(
   type: StatementType,
   config: StatementConfig,
@@ -103,13 +114,13 @@ export function statementToExportResult(
         }
         return out
       })
-      return {
+      return withQueryMeta(data, {
         columns,
         rows: exportRows,
         rowCount: exportRows.length,
         latencyMs,
         truncated,
-      }
+      })
     }
     case StatementType.BANK_STATEMENT: {
       const bankConfig = config as BankStatementConfig
@@ -146,13 +157,13 @@ export function statementToExportResult(
         }
       }
 
-      return {
+      return withQueryMeta(data, {
         columns,
         rows: exportRows,
         rowCount: exportRows.length,
         latencyMs,
         truncated,
-      }
+      })
     }
     case StatementType.LEDGER_BALANCE: {
       const ledgerConfig = config as LedgerBalanceConfig
@@ -179,13 +190,13 @@ export function statementToExportResult(
         return out
       })
 
-      return {
+      return withQueryMeta(data, {
         columns,
         rows: exportRows,
         rowCount: exportRows.length,
         latencyMs,
         truncated,
-      }
+      })
     }
     case StatementType.CUSTOM: {
       const customConfig = config as CustomStatementConfig
@@ -204,13 +215,13 @@ export function statementToExportResult(
         }
         return out
       })
-      return {
+      return withQueryMeta(data, {
         columns: exportColumns,
         rows: exportRows,
         rowCount: exportRows.length,
         latencyMs,
         truncated,
-      }
+      })
     }
     default:
       return data

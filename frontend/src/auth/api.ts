@@ -1,6 +1,5 @@
 import type { AuthUser } from './types'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { API_BASE, apiFetch } from '../api/client'
 
 export interface LoginResponse {
   accessToken: string
@@ -20,31 +19,8 @@ export async function login(identifier: string, password: string): Promise<Login
   return response.json()
 }
 
-export async function refresh(refreshToken: string): Promise<{
-  accessToken: string
-  refreshToken: string
-}> {
-  const response = await fetch(`${API_BASE}/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  })
-  if (!response.ok) {
-    throw new Error('Session expired')
-  }
-  return response.json()
-}
-
 export async function me(accessToken: string): Promise<AuthUser> {
-  const response = await fetch(`${API_BASE}/auth/me`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
-  if (!response.ok) {
-    throw new Error('Unauthorized')
-  }
-  return response.json()
+  return apiFetch<AuthUser>('/auth/me', accessToken)
 }
 
 export async function changePassword(
@@ -52,17 +28,8 @@ export async function changePassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<{ accessToken: string; refreshToken: string }> {
-  const response = await fetch(`${API_BASE}/auth/change-password`, {
+  return apiFetch('/auth/change-password', accessToken, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
     body: JSON.stringify({ currentPassword, newPassword }),
   })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Failed to change password')
-  }
-  return response.json()
 }

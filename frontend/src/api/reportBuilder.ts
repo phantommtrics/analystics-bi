@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch } from './client'
 
 export interface QueryExecuteResult {
   columns: string[]
@@ -28,19 +28,7 @@ async function reportBuilderFetch<T>(
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/report-builder${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  return body as T
+  return apiFetch<T>(`/report-builder${path}`, accessToken, options)
 }
 
 export const reportBuilderApi = {

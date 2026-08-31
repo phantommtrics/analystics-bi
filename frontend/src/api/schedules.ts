@@ -1,28 +1,12 @@
+import { apiFetch } from './client'
 import type { ReportScheduleRecurrence } from '../lib/scheduleRecurrence'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
 
 async function schedulesFetch<T>(
   path: string,
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/schedules${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return response.json()
+  return apiFetch<T>(`/schedules${path}`, accessToken, options)
 }
 
 export type ReportScheduleStatus = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'FAILED'

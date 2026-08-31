@@ -76,7 +76,7 @@ Or manually:
 ```bash
 cd frontend
 npm ci && npm run build    # uses frontend/.env.production; set VITE_API_BASE_URL=/api if needed
-rsync -av --delete dist/ user@server:/var/www/web-prixbi/
+rsync -av --delete dist/ root@85.159.210.85:/var/www/web-prixbi/
 ```
 
 On the server, fix permissions:
@@ -100,6 +100,8 @@ DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/bireports?schema=public"
 DATASOURCE_ENCRYPTION_KEY="your-base64-32-byte-key"
 JWT_ACCESS_SECRET="your-long-random-secret"
 JWT_REFRESH_SECRET="your-other-long-random-secret"
+JWT_ACCESS_EXPIRES_IN="30m"
+JWT_REFRESH_EXPIRES_IN="7d"
 
 APP_PUBLIC_URL=https://sandbox-prixbi.phantommetrics.gm
 CORS_ORIGIN=https://sandbox-prixbi.phantommetrics.gm,http://localhost:5173

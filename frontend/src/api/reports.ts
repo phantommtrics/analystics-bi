@@ -1,29 +1,13 @@
 import type { QueryExecuteResult } from './reportBuilder'
 import type { ReportCategory, ReportVisualization } from '../lib/reportConstants'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch } from './client'
 
 async function reportsFetch<T>(
   path: string,
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/reports${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return response.json()
+  return apiFetch<T>(`/reports${path}`, accessToken, options)
 }
 
 export interface SavedReportSummary {

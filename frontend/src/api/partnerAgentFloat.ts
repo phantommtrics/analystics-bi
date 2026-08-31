@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch } from './client'
 
 type OrgQuery = { organizationId?: string }
 
@@ -21,19 +21,7 @@ async function partnerAgentFloatFetch<T>(
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/partner-agent-float${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  return response.json()
+  return apiFetch<T>(`/partner-agent-float${path}`, accessToken, options)
 }
 
 export type PartnerAgentFloatDeliveryStatus = 'RUNNING' | 'SUCCESS' | 'FAILED'

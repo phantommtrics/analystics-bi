@@ -1,30 +1,14 @@
 import type { DashboardLayout } from '../lib/dashboardLayout'
 import type { ReportCategory } from '../lib/reportConstants'
 import type { SavedReportSummary } from './reports'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch } from './client'
 
 async function dashboardsFetch<T>(
   path: string,
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/dashboards${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return response.json()
+  return apiFetch<T>(`/dashboards${path}`, accessToken, options)
 }
 
 export interface DashboardSummary {

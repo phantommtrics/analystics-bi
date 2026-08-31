@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch } from './client'
 
 export type OrganizationBillingInfo =
   | {
@@ -45,20 +45,9 @@ export type PayInDirectPayResult = {
 }
 
 export async function openPayInDirectPay(accessToken: string): Promise<PayInDirectPayResult> {
-  const response = await fetch(`${API_BASE}/auth/subscription/pay-in-directpay`, {
+  return apiFetch<PayInDirectPayResult>('/auth/subscription/pay-in-directpay', accessToken, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-    },
   })
-
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    throw new Error((body as { message?: string }).message ?? 'Failed to open DirectPay payment')
-  }
-
-  return body as PayInDirectPayResult
 }
 
 export async function launchPayInDirectPay(accessToken: string): Promise<PayInDirectPayResult> {

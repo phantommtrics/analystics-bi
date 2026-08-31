@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch, apiRequest } from './client'
 
 export type AuditLogEntry = {
   id: string
@@ -45,18 +45,7 @@ async function auditFetch<T>(
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/audit-logs${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  return response.json()
+  return apiFetch<T>(`/audit-logs${path}`, accessToken, options)
 }
 
 export const auditLogsApi = {
@@ -70,12 +59,7 @@ export const auditLogsApi = {
     auditFetch<{ actions: string[] }>('/actions', accessToken),
 
   exportCsv: async (accessToken: string, filters: AuditLogFilters) => {
-    const response = await fetch(
-      `${API_BASE}/audit-logs/export${buildQuery(filters)}`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
-    )
+    const response = await apiRequest(`/audit-logs/export${buildQuery(filters)}`, accessToken)
     if (!response.ok) {
       const body = await response.json().catch(() => ({}))
       throw new Error((body as { message?: string }).message ?? 'Export failed')

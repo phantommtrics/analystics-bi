@@ -1,30 +1,14 @@
 import type { ReportCategory } from '../lib/reportConstants'
 import type { StatementConfig, StatementType } from '../lib/statementConfig'
 import type { SavedReportSummary } from './reports'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
+import { apiFetch, apiRequest } from './client'
 
 async function statementsFetch<T>(
   path: string,
   accessToken: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}/statements${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      ...options.headers,
-    },
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error((body as { message?: string }).message ?? 'Request failed')
-  }
-  if (response.status === 204) {
-    return undefined as T
-  }
-  return response.json()
+  return apiFetch<T>(`/statements${path}`, accessToken, options)
 }
 
 export interface StatementSummary {
@@ -121,10 +105,7 @@ export const statementsApi = {
         qs.set(key, value)
       }
     }
-    const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000/api'
-    const response = await fetch(`${API_BASE}/statements/${id}/export?${qs.toString()}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const response = await apiRequest(`/statements/${id}/export?${qs.toString()}`, token)
     if (!response.ok) {
       const body = await response.json().catch(() => ({}))
       throw new Error((body as { message?: string }).message ?? 'Export failed')

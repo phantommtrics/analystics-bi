@@ -1,13 +1,14 @@
 import bcrypt from 'bcryptjs'
-import { TokenStatus, UserType } from '@prisma/client'
+import { TokenStatus } from '@prisma/client'
 import { prisma } from '../prisma.js'
 import {
   resolvePermissions,
   userPermissionInclude,
 } from './permissions.js'
-import { hashToken, signAccessToken, signRefreshToken, verifyRefreshToken } from './tokens.js'
+import { hashToken, parseExpiresInMs, signAccessToken, signRefreshToken, verifyRefreshToken } from './tokens.js'
+import { env } from '../env.js'
 
-const refreshTtlMs = 7 * 24 * 60 * 60 * 1000
+const refreshTtlMs = parseExpiresInMs(env.JWT_REFRESH_EXPIRES_IN, 7 * 24 * 60 * 60 * 1000)
 
 export async function loginWithIdentifier(identifier: string, password: string) {
   const normalized = identifier.toLowerCase().trim()

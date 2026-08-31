@@ -15,7 +15,7 @@ const envSchema = z.object({
     ),
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  JWT_ACCESS_EXPIRES_IN: z.string().default('30m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   APP_PUBLIC_URL: z.string().default('http://localhost:5173'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

@@ -6,6 +6,7 @@ import {
   parseStatementConfig,
 } from './config.js'
 import {
+  grantStatementPermissionsToUserRoles,
   hasExplicitCustomStatementView,
   removeStatementPermissions,
   syncStatementPermissions,
@@ -225,6 +226,14 @@ export async function createStatement(input: CreateStatementInput): Promise<Stat
     },
     include: statementInclude,
   })
+
+  // System users do not get * — create permission rows and attach them to the
+  // creator's roles so they can open/list the statement they just saved.
+  await syncStatementPermissions(row.id, { name: row.name })
+  if (input.createdById) {
+    await grantStatementPermissionsToUserRoles(row.id, input.createdById)
+  }
+
   return formatDetail(row)
 }
 
@@ -305,6 +314,14 @@ export async function publishStatement(
     include: statementInclude,
   })
   await syncStatementPermissions(row.id, { name: row.name })
+
+  const grantUserIds = new Set<string>()
+  if (updatedById) grantUserIds.add(updatedById)
+  if (existing.createdById) grantUserIds.add(existing.createdById)
+  for (const userId of grantUserIds) {
+    await grantStatementPermissionsToUserRoles(row.id, userId)
+  }
+
   return formatDetail(row)
 }
 

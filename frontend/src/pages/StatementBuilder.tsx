@@ -39,7 +39,7 @@ import {
 const initialTab = createStatementTab('FINANCIAL_PL', { title: 'Statement 1' })
 
 export function StatementBuilder() {
-  const { accessToken, hasPermission } = useAuth()
+  const { accessToken, hasPermission, refreshUser } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const canEdit = hasPermission('statement-builder', 'edit')
@@ -331,6 +331,9 @@ export function StatementBuilder() {
         ),
       )
       syncUrlForTab({ ...activeTab, savedStatementId: saved.id })
+      if (!activeTab.savedStatementId) {
+        await refreshUser()
+      }
       await loadStatements()
       setShowSaveModal(false)
     } catch (err) {
@@ -381,8 +384,9 @@ export function StatementBuilder() {
       const saved = await statementsApi.publish(accessToken, activeTab.savedStatementId)
       updateActiveTab({ isPublished: saved.isPublished })
       setBannerSuccess(
-        `"${saved.name}" is published. Assign view permission in Roles to make it visible in the catalog.`,
+        `"${saved.name}" is published. Your role was granted access automatically; adjust in Roles if others need it.`,
       )
+      await refreshUser()
       await loadStatements()
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : 'Failed to publish statement')
@@ -580,7 +584,7 @@ export function StatementBuilder() {
       <ConfirmModal
         open={pendingPublish}
         title="Publish statement?"
-        message={`Publish "${activeTab.name}"? Users will need statement permission assigned in Roles.`}
+        message={`Publish "${activeTab.name}"? Your role gets this statement's permissions automatically. Other users still need the grant in Roles.`}
         confirmLabel="Publish"
         loading={publishLoading}
         onConfirm={confirmPublish}

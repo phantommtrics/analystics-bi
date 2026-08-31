@@ -51,6 +51,55 @@ export async function syncStatementPermissions(
   }
 }
 
+/**
+ * Grant all custom-statement actions for this statement to every role the user
+ * inherits (direct + via groups). Owner is skipped (* already covers them).
+ */
+export async function grantStatementPermissionsToUserRoles(
+  statementId: string,
+  userId: string,
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      userType: true,
+      roles: { select: { roleId: true } },
+      groups: { select: { group: { select: { roleId: true } } } },
+    },
+  })
+  if (!user || user.userType === UserType.OWNER) {
+    return
+  }
+
+  const roleIds = [
+    ...new Set([
+      ...user.roles.map((r) => r.roleId),
+      ...user.groups.map((g) => g.group.roleId),
+    ]),
+  ]
+  if (roleIds.length === 0) {
+    return
+  }
+
+  const permissions = await prisma.permission.findMany({
+    where: { moduleKey: statementModuleKey(statementId) },
+    select: { id: true },
+  })
+  if (permissions.length === 0) {
+    return
+  }
+
+  await prisma.rolePermission.createMany({
+    data: roleIds.flatMap((roleId) =>
+      permissions.map((permission) => ({
+        roleId,
+        permissionId: permission.id,
+      })),
+    ),
+    skipDuplicates: true,
+  })
+}
+
 export async function removeStatementPermissions(statementId: string) {
   const moduleKey = statementModuleKey(statementId)
   await prisma.rolePermission.deleteMany({
@@ -68,11 +117,13 @@ export async function ensureAllStatementPermissions() {
     await syncStatementPermissions(statement.id, { name: statement.name })
   }
 
-  const unpublished = await prisma.statement.findMany({
-    where: { deletedAt: null, isPublished: false },
+  // Soft-deleted statements only — unpublished keep rows so creator grants survive
+  // until an explicit unpublish. Unpublish/delete already call removeStatementPermissions.
+  const deleted = await prisma.statement.findMany({
+    where: { deletedAt: { not: null } },
     select: { id: true },
   })
-  for (const statement of unpublished) {
+  for (const statement of deleted) {
     await removeStatementPermissions(statement.id)
   }
 }
